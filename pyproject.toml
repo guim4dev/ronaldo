@@ -1,0 +1,22 @@
+[project]
+name = "ronaldo"
+version = "0.1.0"
+description = "Say a wake word, talk, pause: Hex transcribes it into the focused app and presses Enter."
+requires-python = ">=3.12"
+dependencies = [
+    "numpy>=2.5.4",
+    "onnxruntime>=1.20",
+    "sounddevice>=0.5.6",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2.0",
+    # only for tests/test_detector.py, which proves our detector matches the reference
+    "openwakeword>=0.4.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+filterwarnings = ["ignore::UserWarning"]
