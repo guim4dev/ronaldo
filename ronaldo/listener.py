@@ -1,4 +1,8 @@
-"""Say the wake word -> Hex records -> silence ends it -> text is pasted and Enter pressed."""
+"""Say a wake word -> Hex records -> silence ends it -> the route decides what happens.
+
+A route either types the text into the focused app (+ Enter) or hands it to an
+agent command (fire and forget, reply pushed as a notification).
+"""
 
 from __future__ import annotations
 
@@ -8,13 +12,13 @@ import signal
 import sys
 import time
 import tomllib
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, field, fields
 from pathlib import Path
 
 import numpy as np
 import sounddevice as sd
 
-from . import hexcli, macos
+from . import agent, hexcli, macos
 from .detector import CHUNK, SAMPLE_RATE, VoiceActivity, WakeWord
 
 log = logging.getLogger("ronaldo")
@@ -24,16 +28,40 @@ MODELS = ROOT / "models"
 CONFIG = Path.home() / ".config" / "ronaldo" / "config.toml"
 
 
+ACTIONS = ("type", "command")
+
+
+@dataclass
+class Route:
+    model: str  # file in models/ or an absolute path
+    action: str = "type"  # "type" into the focused app, or run "command"
+    command: list[str] = field(default_factory=list)  # argv; "{text}" is replaced, else text goes to stdin
+    threshold: float = 0.5  # wake word score that triggers
+    press_enter: bool = True  # type: press Return after pasting
+    notify: bool = True  # command: push the agent's reply as a notification
+    timeout_seconds: float = 900  # command: give up on the agent after this long
+    name: str = ""
+
+    def __post_init__(self):
+        if self.action not in ACTIONS:
+            raise ValueError(f"route {self.model}: action must be one of {ACTIONS}, got {self.action!r}")
+        if self.action == "command" and not self.command:
+            raise ValueError(f"route {self.model}: action 'command' needs a command")
+        self.name = self.name or self.model_path().stem
+
+    def model_path(self) -> Path:
+        p = Path(self.model).expanduser()
+        return p if p.is_absolute() else MODELS / p
+
+
 @dataclass
 class Config:
-    model: str = "ronaldo_ptbr.onnx"  # file in models/ or an absolute path
-    threshold: float = 0.5  # wake word score that triggers
+    routes: list[Route] = field(default_factory=lambda: [Route(model="ronaldo_ptbr.onnx")])
     silence_seconds: float = 2.0  # quiet time that ends the dictation
     no_speech_seconds: float = 6.0  # give up if nothing is said after the wake word
     max_seconds: float = 60.0  # hard cap per dictation
     vad_threshold: float = 0.5  # Silero speech probability counted as speech
-    press_enter: bool = True
-    cooldown_seconds: float = 1.5  # ignore the wake word right after a dictation
+    cooldown_seconds: float = 1.5  # ignore wake words right after a dictation
     language: str = "auto"  # Hex transcription language; "auto" = macOS preferred language
 
     def resolved_language(self) -> str:
@@ -47,11 +75,10 @@ class Config:
         known = {f.name for f in fields(cls)}
         for k in set(data) - known:
             log.warning("config: chave desconhecida ignorada: %s", k)
-        return cls(**{k: v for k, v in data.items() if k in known})
-
-    def model_path(self) -> Path:
-        p = Path(self.model).expanduser()
-        return p if p.is_absolute() else MODELS / p
+        kw = {k: v for k, v in data.items() if k in known}
+        if "routes" in kw:
+            kw["routes"] = [Route(**r) for r in kw["routes"]]
+        return cls(**kw)
 
 
 def _apple_languages() -> list[str]:
@@ -70,7 +97,9 @@ def system_language() -> str:
 class Listener:
     def __init__(self, cfg: Config):
         self.cfg = cfg
-        self.wake = WakeWord(cfg.model_path(), MODELS)
+        self.routes = {r.name: r for r in cfg.routes}
+        self.wake = WakeWord([r.model_path() for r in cfg.routes], MODELS)
+        self.path = agent.login_path() if any(r.action == "command" for r in cfg.routes) else ""
         self.vad = VoiceActivity(MODELS)
         self.audio: queue.Queue[np.ndarray] = queue.Queue(maxsize=200)
         self.quiet_until = 0.0
@@ -112,7 +141,11 @@ class Listener:
         while True:
             yield self.audio.get()
 
-    def _dictate(self) -> None:
+    def _pick(self, scores: dict[str, float]) -> Route | None:
+        hits = [(s, self.routes[n]) for n, s in scores.items() if s >= self.routes[n].threshold]
+        return max(hits, key=lambda h: h[0])[1] if hits else None
+
+    def _dictate(self, route: Route) -> None:
         if not hexcli.ensure_running():
             return
         hexcli.ensure_language(self.cfg.resolved_language())  # best effort: dictate anyway
@@ -124,25 +157,29 @@ class Listener:
         finally:
             text = hexcli.stop_and_transcribe()  # never leave Hex recording
         if not text:
-            log.info("sem fala; nada colado")
+            log.info("sem fala; nada feito")
             return
-        log.info("colando %d caracteres%s", len(text), " + Enter" if self.cfg.press_enter else "")
-        macos.type_and_submit(text, submit=self.cfg.press_enter)
+        if route.action == "command":
+            agent.dispatch(route.command, text, path=self.path, timeout=route.timeout_seconds, notify_reply=route.notify, name=route.name)
+            return
+        log.info("colando %d caracteres%s", len(text), " + Enter" if route.press_enter else "")
+        macos.type_and_submit(text, submit=route.press_enter)
 
     def run(self) -> None:
         cfg = self.cfg
-        log.info("ouvindo '%s' (limiar %.2f)", cfg.model_path().stem, cfg.threshold)
-        if not macos.is_trusted_for_accessibility():
+        for r in cfg.routes:
+            log.info("ouvindo '%s' → %s (limiar %.2f)", r.name, r.action if r.action == "type" else r.command[0], r.threshold)
+        if any(r.action == "type" for r in cfg.routes) and not macos.is_trusted_for_accessibility():
             log.warning("sem permissão de Acessibilidade: o texto não vai ser colado nem o Enter enviado")
         with sd.InputStream(samplerate=SAMPLE_RATE, channels=1, dtype="int16", blocksize=CHUNK, callback=self._on_audio):
             while True:
-                chunk = self.audio.get()
-                score = self.wake.predict(chunk)
-                if score < cfg.threshold or time.monotonic() < self.quiet_until:
+                scores = self.wake.scores(self.audio.get())
+                route = self._pick(scores)
+                if route is None or time.monotonic() < self.quiet_until:
                     continue
-                log.info("wake word (nota %.2f)", score)
+                log.info("wake word '%s' (nota %.2f)", route.name, scores[route.name])
                 try:
-                    self._dictate()
+                    self._dictate(route)
                 except Exception:
                     log.exception("falha no ditado")
                 self._drain()
@@ -154,8 +191,9 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", stream=sys.stdout)
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
     cfg = Config.load()
-    if not cfg.model_path().exists():
-        log.error("modelo não encontrado: %s", cfg.model_path())
+    missing = [str(r.model_path()) for r in cfg.routes if not r.model_path().exists()]
+    if missing:
+        log.error("modelo não encontrado: %s", ", ".join(missing))
         sys.exit(1)
     Listener(cfg).run()
 

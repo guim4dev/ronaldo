@@ -31,12 +31,18 @@ def _session(path: Path) -> ort.InferenceSession:
 
 
 class WakeWord:
-    def __init__(self, model: Path, models_dir: Path):
+    """One or more wake word classifiers sharing a single feature pipeline."""
+
+    def __init__(self, models: Path | list[Path], models_dir: Path):
         self._mel = _session(models_dir / "melspectrogram.onnx")
         self._emb = _session(models_dir / "embedding_model.onnx")
-        self._clf = _session(model)
-        self._n_features = self._clf.get_inputs()[0].shape[1]
+        paths = [models] if isinstance(models, Path) else list(models)
+        self._clfs = {p.stem: _session(p) for p in paths}
         self.reset()
+
+    @property
+    def names(self) -> list[str]:
+        return list(self._clfs)
 
     def reset(self) -> None:
         self._raw = np.zeros(0, dtype=np.int16)
@@ -54,17 +60,24 @@ class WakeWord:
         batch = np.asarray(windows, dtype=np.float32)[..., None]
         return self._emb.run(None, {"input_1": batch})[0].squeeze()
 
-    def predict(self, chunk: np.ndarray) -> float:
-        """Feed exactly one CHUNK of int16 audio; return the wake word score (0..1)."""
+    def scores(self, chunk: np.ndarray) -> dict[str, float]:
+        """Feed exactly one CHUNK of int16 audio; return each wake word's score (0..1)."""
         self._raw = np.concatenate([self._raw, chunk])[-(CHUNK + _MEL_CONTEXT) :]
         self._mels = np.vstack([self._mels, self._melspec(self._raw)])[-970:]
         window = self._mels[-_MEL_WINDOW:].astype(np.float32)[None, :, :, None]
         emb = self._emb.run(None, {"input_1": window})[0].squeeze()
         self._features = np.vstack([self._features, emb])[-120:]
-        x = self._features[-self._n_features :][None].astype(np.float32)
-        score = float(self._clf.run(None, {self._clf.get_inputs()[0].name: x})[0].squeeze())
         self._seen += 1
-        return 0.0 if self._seen <= _WARMUP else score
+        out = {}
+        for name, clf in self._clfs.items():
+            inp = clf.get_inputs()[0]
+            x = self._features[-inp.shape[1] :][None].astype(np.float32)
+            out[name] = 0.0 if self._seen <= _WARMUP else float(clf.run(None, {inp.name: x})[0].squeeze())
+        return out
+
+    def predict(self, chunk: np.ndarray) -> float:
+        """Single-model convenience: the highest score across loaded wake words."""
+        return max(self.scores(chunk).values())
 
 
 class VoiceActivity:

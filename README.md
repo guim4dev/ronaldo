@@ -1,6 +1,6 @@
 # Ronaldo
 
-Ditado mãos-livres para macOS em cima do [Hex](https://hex.kitlangton.com): você fala **"Ronaldo"**, fala o que quiser e faz uma pausa. O Hex transcreve, o texto é colado no app em foco e o Enter é pressionado.
+Ditado mãos-livres para macOS em cima do [Hex](https://hex.kitlangton.com): você fala uma wake word, fala o que quiser e faz uma pausa. Conforme a palavra, o texto é **digitado no app em foco** (com Enter) ou **enviado para um agente** (Claude Code, Codex, Hermes…), e a resposta do agente aparece como notificação.
 
 ```
 "Ronaldo"  →  hex dictation start  →  você fala  →  ~2 s de silêncio  →  hex dictation stop --print  →  cola + Enter
@@ -30,19 +30,36 @@ Desinstalar: `./uninstall.sh`.
 
 ## Configurar
 
-`~/.config/ronaldo/config.toml` (todas as chaves são opcionais):
+`~/.config/ronaldo/config.toml`. Cada **rota** liga uma wake word a uma ação, e dá pra ter quantas quiser:
 
 ```toml
-model = "ronaldo_ptbr.onnx"   # arquivo em models/ ou caminho absoluto
-threshold = 0.5               # nota mínima da wake word
-silence_seconds = 2.0         # silêncio que encerra o ditado
-no_speech_seconds = 6.0       # desiste se nada for dito após a wake word
-max_seconds = 60.0            # limite por ditado
+# Palavra 1: digita no app em foco + Enter
+[[routes]]
+model = "extra/wall-e.onnx"   # arquivo em models/ ou caminho absoluto
+action = "type"
+# press_enter = true
+# threshold = 0.5
+
+# Palavra 2: manda o texto pra um agente qualquer (fire-and-forget)
+[[routes]]
+model = "ronaldo_ptbr.onnx"
+action = "command"
+command = ["claude", "-p", "--dangerously-skip-permissions", "{text}"]
+# command = ["codex", "exec", "{text}"]
+# command = ["hermes", "chat"]          # sem {text}: o texto vai pelo stdin
+# notify = true                        # resposta do agente vira notificação
+# timeout_seconds = 900
+
+# Globais (opcionais)
+silence_seconds = 2.0     # silêncio que encerra o ditado
+no_speech_seconds = 6.0   # desiste se nada for dito após a wake word
+max_seconds = 60.0        # limite por ditado
 vad_threshold = 0.5
-press_enter = true
 cooldown_seconds = 1.5
-language = "auto"            # idioma da transcrição no Hex; "auto" = idioma do macOS (pt-BR → pt)
+language = "auto"         # idioma da transcrição no Hex; "auto" = idioma do macOS (pt-BR → pt)
 ```
+
+**Rotas de agente:** o comando roda em segundo plano (a escuta não para), no diretório home e com o `PATH` do teu shell de login. O texto entra no lugar de `{text}`, como argumento separado (sem passar por shell) ou, sem placeholder, pelo stdin, e também fica em `$RONALDO_TEXT`. O que o comando imprimir vira uma notificação do macOS ("Ronaldo · <rota>"), e falhas e timeouts também viram notificação. Que permissões o agente tem é decisão tua, definida no próprio comando. Dica: peça ao agente pra responder em uma frase curta, porque a resposta vira push.
 
 Antes de cada ditado o Ronaldo confere o idioma do Hex e corrige se alguém tiver mudado.
 
@@ -64,4 +81,5 @@ Os modelos prontos de "Ronaldo" que existem são treinados com pronúncia em ing
 ## Cuidados
 
 - O Enter vai para **qualquer** app em foco. No Slack, por exemplo, a mensagem é enviada na hora. Para só colar, use `press_enter = false`.
+- Uma rota de agente com permissão total executa o que for dito, e também o que um disparo falso, um vídeo tocando ou outra pessoa no cômodo disserem. Escolha as permissões do comando com isso em mente.
 - A área de transferência é restaurada depois de colar, mas só se continha texto.

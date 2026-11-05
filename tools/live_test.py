@@ -14,7 +14,7 @@ from ronaldo.detector import CHUNK, WakeWord  # noqa: E402
 from ronaldo.listener import Config, MODELS  # noqa: E402
 
 secs = float(sys.argv[1]) if len(sys.argv) > 1 else 20
-model = Path(sys.argv[2]) if len(sys.argv) > 2 else Config.load().model_path()
+model = Path(sys.argv[2]) if len(sys.argv) > 2 else Config.load().routes[0].model_path()
 ww = WakeWord(model, MODELS)
 print(f"Modelo {model.name}. Fala a wake word algumas vezes e converse normal ({secs:.0f}s)...", flush=True)
 peaks, end = [], time.time() + secs

@@ -29,7 +29,7 @@ def chunks(audio: np.ndarray):
 @pytest.fixture
 def listener():
     lst = Listener.__new__(Listener)  # skip the wake word model: only VAD is exercised
-    lst.cfg = Config()
+    lst.cfg = Config(routes=[])
     lst.vad = VoiceActivity(MODELS)
     return lst
 
@@ -83,7 +83,7 @@ def test_config_ignores_unknown_keys(tmp_path):
     p = tmp_path / "c.toml"
     p.write_text('silence_seconds = 3.5\nbogus = 1\n')
     cfg = Config.load(p)
-    assert cfg.silence_seconds == 3.5 and cfg.threshold == 0.5
+    assert cfg.silence_seconds == 3.5 and cfg.routes[0].threshold == 0.5
 
 
 def test_reads_from_the_live_audio_queue(listener, tmp_path):
@@ -112,5 +112,5 @@ def test_hex_is_stopped_even_if_recording_crashes(listener, monkeypatch):
 
     monkeypatch.setattr(listener, "_record_until_silence", boom)
     with pytest.raises(RuntimeError):
-        listener._dictate()
+        listener._dictate(__import__('ronaldo.listener', fromlist=['Route']).Route(model='x.onnx'))
     assert calls == ["start", "stop"]

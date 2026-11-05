@@ -54,3 +54,14 @@ def test_reset_restores_initial_state(tmp_path):
     ww.reset()
     second = [ww.predict(audio[i : i + CHUNK]) for i in range(0, len(audio) - CHUNK, CHUNK)]
     assert first == second
+
+
+def test_several_wake_words_score_like_each_one_alone(tmp_path):
+    alexa = JARVIS.with_name("alexa_v0.1.onnx")
+    audio = tts(tmp_path, "hey jarvis, alexa")
+    both, solo_j, solo_a = WakeWord([JARVIS, alexa], MODELS), WakeWord(JARVIS, MODELS), WakeWord(alexa, MODELS)
+    for i in range(0, len(audio) - CHUNK, CHUNK):
+        c = audio[i : i + CHUNK]
+        s = both.scores(c)
+        assert s[JARVIS.stem] == solo_j.predict(c)
+        assert s[alexa.stem] == solo_a.predict(c)
