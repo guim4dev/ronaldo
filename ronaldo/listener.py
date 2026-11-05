@@ -6,6 +6,7 @@ agent command (fire and forget, reply pushed as a notification).
 
 from __future__ import annotations
 
+import fcntl
 import logging
 import queue
 import signal
@@ -26,6 +27,7 @@ log = logging.getLogger("ronaldo")
 ROOT = Path(__file__).resolve().parent.parent
 MODELS = ROOT / "models"
 CONFIG = Path.home() / ".config" / "ronaldo" / "config.toml"
+LOCK = Path.home() / "Library" / "Caches" / "ronaldo.lock"
 
 
 ACTIONS = ("type", "command")
@@ -187,9 +189,25 @@ class Listener:
                 self.quiet_until = time.monotonic() + cfg.cooldown_seconds
 
 
+def single_instance(path: Path = LOCK):
+    """Hold an exclusive lock for this process's lifetime; None if another listener has it."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    f = open(path, "w")
+    try:
+        fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        f.close()
+        return None
+    return f
+
+
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", stream=sys.stdout)
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+    lock = single_instance()
+    if lock is None:
+        log.warning("outro Ronaldo já está ouvindo; saindo")
+        sys.exit(0)
     cfg = Config.load()
     missing = [str(r.model_path()) for r in cfg.routes if not r.model_path().exists()]
     if missing:

@@ -57,7 +57,7 @@ def run(template: list[str], text: str, *, path: str, timeout: float, notify_rep
         ok, output = False, ""
         reply = f"O agente não respondeu em {timeout:.0f}s"
     log.info("[%s] %s: %s", name, "ok" if ok else "falhou", reply)
-    if notify_reply:
+    if notify_reply or not ok:  # failures always surface, even on silent routes
         notify(summarize(reply) or "Feito.", title=f"Ronaldo · {name}")
     return ok, reply
 

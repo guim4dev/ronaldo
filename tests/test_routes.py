@@ -114,3 +114,12 @@ def test_failures_are_reported_not_swallowed(monkeypatch):
 
 def test_long_replies_are_trimmed_for_the_push():
     assert len(agent.summarize("palavra " * 200)) == agent.NOTIFY_CHARS
+
+
+def test_silent_route_still_reports_failures(monkeypatch):
+    pushed = []
+    monkeypatch.setattr(agent, "notify", lambda msg, title: pushed.append(msg))
+    agent.run(["/bin/echo", "tudo certo"], "x", path="/bin", timeout=10, notify_reply=False, name="x")
+    assert pushed == []
+    agent.run(["/usr/bin/false"], "x", path="/usr/bin", timeout=10, notify_reply=False, name="x")
+    assert len(pushed) == 1 and pushed[0].startswith("O agente falhou")

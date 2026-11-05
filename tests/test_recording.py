@@ -1,6 +1,7 @@
 """End-of-dictation logic, driven by real Silero VAD on macOS TTS audio."""
 
 import subprocess
+from pathlib import Path
 import wave
 
 import numpy as np
@@ -114,3 +115,18 @@ def test_hex_is_stopped_even_if_recording_crashes(listener, monkeypatch):
     with pytest.raises(RuntimeError):
         listener._dictate(__import__('ronaldo.listener', fromlist=['Route']).Route(model='x.onnx'))
     assert calls == ["start", "stop"]
+
+
+def test_only_one_listener_can_run(tmp_path):
+    """A second instance (e.g. the app double-clicked in Finder) must not listen too."""
+    import subprocess, sys
+
+    from ronaldo.listener import single_instance
+
+    lock = tmp_path / "ronaldo.lock"
+    held = single_instance(lock)
+    assert held is not None
+    code = "import sys; from pathlib import Path; from ronaldo.listener import single_instance; sys.exit(0 if single_instance(Path(sys.argv[1])) is None else 1)"
+    assert subprocess.run([sys.executable, "-c", code, str(lock)], cwd=Path(__file__).parent.parent).returncode == 0
+    held.close()
+    assert subprocess.run([sys.executable, "-c", code, str(lock)], cwd=Path(__file__).parent.parent).returncode == 1
