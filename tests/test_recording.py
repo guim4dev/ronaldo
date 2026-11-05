@@ -84,3 +84,32 @@ def test_config_ignores_unknown_keys(tmp_path):
     p.write_text('silence_seconds = 3.5\nbogus = 1\n')
     cfg = Config.load(p)
     assert cfg.silence_seconds == 3.5 and cfg.threshold == 0.5
+
+
+def test_reads_from_the_live_audio_queue(listener, tmp_path):
+    """The real path: no iterator passed, chunks come from the mic queue."""
+    import queue
+
+    listener.audio = queue.Queue()
+    speech = tts(tmp_path, "Uma frase curta.")
+    for c in chunks(np.concatenate([speech, room_noise(4)])):
+        listener.audio.put(c)
+    assert listener._record_until_silence() == "silence"
+
+
+def test_hex_is_stopped_even_if_recording_crashes(listener, monkeypatch):
+    """A crash mid-recording must not leave Hex recording forever."""
+    from ronaldo import hexcli
+
+    calls = []
+    monkeypatch.setattr(hexcli, "ensure_running", lambda: True)
+    monkeypatch.setattr(hexcli, "start_dictation", lambda: calls.append("start") or True)
+    monkeypatch.setattr(hexcli, "stop_and_transcribe", lambda: calls.append("stop") or "texto")
+
+    def boom(*a, **k):
+        raise RuntimeError("mic sumiu")
+
+    monkeypatch.setattr(listener, "_record_until_silence", boom)
+    with pytest.raises(RuntimeError):
+        listener._dictate()
+    assert calls == ["start", "stop"]

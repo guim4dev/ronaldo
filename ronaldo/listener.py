@@ -75,7 +75,7 @@ class Listener:
         behaviour is identical when fed from a file in tests.
         """
         cfg = self.cfg
-        source = chunks if chunks is not None else iter(self.audio.get, None)
+        source = chunks if chunks is not None else self._live_chunks()
         self.vad.reset()
         step = CHUNK / SAMPLE_RATE
         elapsed, last_speech = 0.0, None
@@ -91,12 +91,18 @@ class Listener:
                 return "max"
         return "eof"
 
+    def _live_chunks(self):
+        while True:
+            yield self.audio.get()
+
     def _dictate(self) -> None:
         if not hexcli.ensure_running() or not hexcli.start_dictation():
             return
         log.info("gravando…")
-        log.info("fim da gravação: %s", self._record_until_silence())
-        text = hexcli.stop_and_transcribe()
+        try:
+            log.info("fim da gravação: %s", self._record_until_silence())
+        finally:
+            text = hexcli.stop_and_transcribe()  # never leave Hex recording
         if not text:
             log.info("sem fala; nada colado")
             return
