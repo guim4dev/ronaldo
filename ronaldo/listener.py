@@ -34,6 +34,10 @@ class Config:
     vad_threshold: float = 0.5  # Silero speech probability counted as speech
     press_enter: bool = True
     cooldown_seconds: float = 1.5  # ignore the wake word right after a dictation
+    language: str = "auto"  # Hex transcription language; "auto" = macOS preferred language
+
+    def resolved_language(self) -> str:
+        return system_language() if self.language == "auto" else self.language
 
     @classmethod
     def load(cls, path: Path = CONFIG) -> "Config":
@@ -48,6 +52,19 @@ class Config:
     def model_path(self) -> Path:
         p = Path(self.model).expanduser()
         return p if p.is_absolute() else MODELS / p
+
+
+def _apple_languages() -> list[str]:
+    import subprocess
+
+    out = subprocess.run(["defaults", "read", "-g", "AppleLanguages"], capture_output=True, text=True).stdout
+    return [s.strip().strip('",') for s in out.splitlines() if s.strip() not in ("(", ")", "")]
+
+
+def system_language() -> str:
+    """macOS's preferred language as Hex expects it: "pt-BR" -> "pt"."""
+    langs = _apple_languages()
+    return langs[0].split("-")[0].lower() if langs else "en"
 
 
 class Listener:
@@ -96,7 +113,10 @@ class Listener:
             yield self.audio.get()
 
     def _dictate(self) -> None:
-        if not hexcli.ensure_running() or not hexcli.start_dictation():
+        if not hexcli.ensure_running():
+            return
+        hexcli.ensure_language(self.cfg.resolved_language())  # best effort: dictate anyway
+        if not hexcli.start_dictation():
             return
         log.info("gravando…")
         try:

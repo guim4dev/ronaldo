@@ -41,7 +41,10 @@ max_seconds = 60.0            # limite por ditado
 vad_threshold = 0.5
 press_enter = true
 cooldown_seconds = 1.5
+language = "auto"            # idioma da transcrição no Hex; "auto" = idioma do macOS (pt-BR → pt)
 ```
+
+Antes de cada ditado o Ronaldo confere o idioma do Hex e corrige se alguém tiver mudado.
 
 Reinicie após mudar: `launchctl kickstart -k gui/$(id -u)/dev.guima.ronaldo`.
 

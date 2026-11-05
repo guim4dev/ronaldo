@@ -47,6 +47,22 @@ def ensure_running(timeout: float = 45) -> bool:
     return False
 
 
+def ensure_language(language: str) -> bool:
+    """Make Hex transcribe in `language` (e.g. "pt"), switching only if it drifted."""
+    s = status()
+    model = (s or {}).get("model") or {}
+    if not model.get("id"):
+        log.error("não consegui ler o modelo do Hex para conferir o idioma")
+        return False
+    if model.get("language") == language:
+        return True
+    log.info("Hex estava em '%s'; trocando para '%s'", model.get("language"), language)
+    r = _run("model", "use", model["id"], "--language", language)
+    if r.returncode != 0:
+        log.error("hex model use falhou (%s): %s", r.returncode, (r.stderr or r.stdout).strip())
+    return r.returncode == 0
+
+
 def start_dictation() -> bool:
     r = _run("dictation", "start")
     if r.returncode != 0:

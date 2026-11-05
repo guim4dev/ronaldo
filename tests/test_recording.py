@@ -103,6 +103,7 @@ def test_hex_is_stopped_even_if_recording_crashes(listener, monkeypatch):
 
     calls = []
     monkeypatch.setattr(hexcli, "ensure_running", lambda: True)
+    monkeypatch.setattr(hexcli, "ensure_language", lambda lang: True)
     monkeypatch.setattr(hexcli, "start_dictation", lambda: calls.append("start") or True)
     monkeypatch.setattr(hexcli, "stop_and_transcribe", lambda: calls.append("stop") or "texto")
 
