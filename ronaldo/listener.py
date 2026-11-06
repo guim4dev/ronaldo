@@ -45,6 +45,7 @@ class Route:
     hud: bool = True  # command: show floating feedback
     timeout_seconds: float = 900  # command: give up on the agent after this long
     name: str = ""
+    atalhos: list[dict] = field(default_factory=list)
 
     def __post_init__(self):
         if self.action not in ACTIONS:
@@ -52,6 +53,14 @@ class Route:
         if self.action == "command" and not self.command:
             raise ValueError(f"route {self.model}: action 'command' needs a command")
         self.name = self.name or self.model_path().stem
+        for item in self.atalhos:
+            if not item.get("terminal") or not item.get("palavras"):
+                raise ValueError("atalho precisa de terminal e palavras")
+        if self.atalhos and self.action != "command":
+            raise ValueError("atalhos só são válidos em rotas command")
+        for item in self.atalhos:
+            if not item.get("terminal") or not item.get("palavras"):
+                raise ValueError("atalho precisa de terminal e palavras")
 
     def model_path(self) -> Path:
         p = Path(self.model).expanduser()
@@ -82,6 +91,14 @@ class Config:
         kw = {k: v for k, v in data.items() if k in known}
         if "routes" in kw:
             kw["routes"] = [Route(**r) for r in kw["routes"]]
+            seen = set()
+            for route in kw["routes"]:
+                for shortcut in route.atalhos:
+                    for word in shortcut["palavras"]:
+                        normalized = word.casefold()
+                        if normalized in seen:
+                            raise ValueError(f"palavra de atalho repetida: {word}")
+                        seen.add(normalized)
         return cls(**kw)
 
 
@@ -173,7 +190,7 @@ class Listener:
             if route.action == "command":
                 if use_hud:
                     agent_hud.show("🎙️ Ronaldo ouviu", agent.summarize(text) + " — enviando…", "info", 6, req_id)
-                agent.dispatch(route.command, text, path=self.path, timeout=route.timeout_seconds, notify_reply=route.notify, name=route.name, hud=use_hud, req_id=req_id)
+                agent.dispatch(route.command, text, path=self.path, timeout=route.timeout_seconds, notify_reply=route.notify, name=route.name, hud=use_hud, req_id=req_id, atalhos=route.atalhos)
                 return
             log.info("colando %d caracteres%s", len(text), " + Enter" if route.press_enter else "")
             macos.type_and_submit(text, submit=route.press_enter)

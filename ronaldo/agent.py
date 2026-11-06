@@ -41,8 +41,21 @@ def summarize(output: str) -> str:
     return text if len(text) <= NOTIFY_CHARS else text[: NOTIFY_CHARS - 1] + "…"
 
 
-def run(template: list[str], text: str, *, path: str, timeout: float, notify_reply: bool, name: str, hud: bool = False, req_id: int | None = None) -> tuple[bool, str]:
+def run(template: list[str], text: str, *, path: str, timeout: float, notify_reply: bool, name: str, hud: bool = False, req_id: int | None = None, atalhos=None) -> tuple[bool, str]:
     """Run the agent command to completion (call from a worker thread)."""
+    if atalhos:
+        from .atalhos import casar, entregar_terminal
+        match = casar(text, atalhos)
+        if match:
+            shortcut, remainder = match
+            ok, message = entregar_terminal(shortcut["terminal"], remainder, path=path, timeout=10)
+            if hud:
+                from . import hud as hud_module
+                kind = "ok" if message == "Entregue ao batuqueiro." else ("warn" if ok else "err")
+                prefix = "✅ " if ok else "❌ "
+                title = message if ok else "Não entregou ao batuqueiro"
+                hud_module.show(prefix + title, summarize(remainder or message), kind, 6 if ok else 12, req_id)
+            return ok, message
     argv, stdin = build_argv(template, text)
     env = {**os.environ, "PATH": path, "RONALDO_TEXT": text}
     log.info("[%s] enviando para %s", name, argv[0])

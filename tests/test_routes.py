@@ -123,3 +123,28 @@ def test_silent_route_still_reports_failures(monkeypatch):
     assert pushed == []
     agent.run(["/usr/bin/false"], "x", path="/usr/bin", timeout=10, notify_reply=False, name="x")
     assert len(pushed) == 1 and pushed[0].startswith("O agente falhou")
+
+
+def test_shortcut_matching_rules():
+    from ronaldo.atalhos import casar
+    shortcuts = [{"palavras": ["batuqueiro", "batuqueira"], "terminal": "x"}]
+    for text, remainder in [("Batuqueiro, toca X", "toca X"), ("batuqueiro toca X", "toca X"), ("Ronaldo, batuqueiro. Pausa", "Pausa"), ("BATUQUEIRA pula", "pula")]:
+        assert casar(text, shortcuts) == (shortcuts[0], remainder)
+    for text in ("fala pro batuqueiro tocar", "batuqueirotoca", "pessoal, batuqueiro", "Ronaldo batuqueiros"):
+        assert casar(text, shortcuts) is None
+    assert casar("batuqueiro", []) is None
+
+
+def test_shortcut_config_and_validation(tmp_path):
+    cfg = write(tmp_path, '''[[routes]]
+model="ronaldo_ptbr.onnx"
+action="command"
+command=["claude"]
+[[routes.atalhos]]
+palavras=["batuqueiro"]
+terminal="batuqueiro"
+nome="batuqueiro"
+''')
+    assert cfg.routes[0].atalhos == [{"palavras": ["batuqueiro"], "terminal": "batuqueiro", "nome": "batuqueiro"}]
+    with pytest.raises(ValueError, match="repetida"):
+        write(tmp_path, '[[routes]]\nmodel="x"\naction="command"\ncommand=["x"]\n[[routes.atalhos]]\npalavras=["oi"]\nterminal="t"\n[[routes.atalhos]]\npalavras=["oi"]\nterminal="t"\n')

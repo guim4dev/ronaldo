@@ -89,3 +89,12 @@ Código: [MIT](LICENSE). Modelos: ver [`models/LICENSES.md`](models/LICENSES.md)
 - O Enter vai para **qualquer** app em foco. No Slack, por exemplo, a mensagem é enviada na hora. Para só colar, use `press_enter = false`.
 - Uma rota de agente com permissão total executa o que for dito, e também o que um disparo falso, um vídeo tocando ou outra pessoa no cômodo disserem. Escolha as permissões do comando com isso em mente.
 - A área de transferência é restaurada depois de colar, mas só se continha texto.
+
+Atalhos podem encaminhar uma frase iniciada por uma palavra configurada para um terminal Hex dedicado:
+
+```toml
+[[routes.atalhos]]
+palavras = ["batuqueiro"]
+terminal = "batuqueiro"
+nome = "batuqueiro"
+```
