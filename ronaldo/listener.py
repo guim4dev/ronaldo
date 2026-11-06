@@ -20,6 +20,7 @@ import numpy as np
 import sounddevice as sd
 
 from . import agent, hexcli, macos
+from . import hud as agent_hud
 from .detector import CHUNK, SAMPLE_RATE, VoiceActivity, WakeWord
 
 log = logging.getLogger("ronaldo")
@@ -41,6 +42,7 @@ class Route:
     threshold: float = 0.5  # wake word score that triggers
     press_enter: bool = True  # type: press Return after pasting
     notify: bool = True  # command: push the agent's reply as a notification
+    hud: bool = True  # command: show floating feedback
     timeout_seconds: float = 900  # command: give up on the agent after this long
     name: str = ""
 
@@ -148,24 +150,37 @@ class Listener:
         return max(hits, key=lambda h: h[0])[1] if hits else None
 
     def _dictate(self, route: Route) -> None:
-        if not hexcli.ensure_running():
-            return
-        hexcli.ensure_language(self.cfg.resolved_language())  # best effort: dictate anyway
-        if not hexcli.start_dictation():
-            return
-        log.info("gravando…")
+        use_hud = route.action == "command" and route.hud
+        req_id = agent_hud.begin() if use_hud else None
         try:
-            log.info("fim da gravação: %s", self._record_until_silence())
-        finally:
-            text = hexcli.stop_and_transcribe()  # never leave Hex recording
-        if not text:
-            log.info("sem fala; nada feito")
-            return
-        if route.action == "command":
-            agent.dispatch(route.command, text, path=self.path, timeout=route.timeout_seconds, notify_reply=route.notify, name=route.name)
-            return
-        log.info("colando %d caracteres%s", len(text), " + Enter" if route.press_enter else "")
-        macos.type_and_submit(text, submit=route.press_enter)
+            if not hexcli.ensure_running():
+                if use_hud: agent_hud.show("⚠️ Não entendi", "Hex não está disponível.", "warn", 5, req_id)
+                return
+            hexcli.ensure_language(self.cfg.resolved_language())
+            if not hexcli.start_dictation():
+                if use_hud: agent_hud.show("⚠️ Não entendi", "Não consegui iniciar a gravação.", "warn", 5, req_id)
+                return
+            log.info("gravando…")
+            try:
+                reason = self._record_until_silence()
+                log.info("fim da gravação: %s", reason)
+            finally:
+                text = hexcli.stop_and_transcribe()
+            if not text:
+                log.info("sem fala; nada feito")
+                if use_hud: agent_hud.show("⚠️ Não entendi", "Não detectei fala.", "warn", 5, req_id)
+                return
+            if route.action == "command":
+                if use_hud:
+                    agent_hud.show("🎙️ Ronaldo ouviu", agent.summarize(text) + " — enviando…", "info", 6, req_id)
+                agent.dispatch(route.command, text, path=self.path, timeout=route.timeout_seconds, notify_reply=route.notify, name=route.name, hud=use_hud, req_id=req_id)
+                return
+            log.info("colando %d caracteres%s", len(text), " + Enter" if route.press_enter else "")
+            macos.type_and_submit(text, submit=route.press_enter)
+        except Exception as exc:
+            if use_hud:
+                agent_hud.show("⚠️ Não entendi", agent.summarize(str(exc)) or "Falha no ditado.", "warn", 5, req_id)
+            raise
 
     def run(self) -> None:
         cfg = self.cfg

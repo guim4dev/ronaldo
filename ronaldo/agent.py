@@ -41,7 +41,7 @@ def summarize(output: str) -> str:
     return text if len(text) <= NOTIFY_CHARS else text[: NOTIFY_CHARS - 1] + "…"
 
 
-def run(template: list[str], text: str, *, path: str, timeout: float, notify_reply: bool, name: str) -> tuple[bool, str]:
+def run(template: list[str], text: str, *, path: str, timeout: float, notify_reply: bool, name: str, hud: bool = False, req_id: int | None = None) -> tuple[bool, str]:
     """Run the agent command to completion (call from a worker thread)."""
     argv, stdin = build_argv(template, text)
     env = {**os.environ, "PATH": path, "RONALDO_TEXT": text}
@@ -49,16 +49,28 @@ def run(template: list[str], text: str, *, path: str, timeout: float, notify_rep
     try:
         r = subprocess.run(argv, input=stdin, capture_output=True, text=True, timeout=timeout, env=env, cwd=os.path.expanduser("~"))
         ok, output = r.returncode == 0, (r.stdout.strip() or r.stderr.strip())
+        error_detail = r.stderr.strip() or r.stdout.strip()
         reply = output if ok else f"O agente falhou (código {r.returncode}): {output}"
     except FileNotFoundError:
         ok, output = False, ""
-        reply = f"Comando não encontrado: {argv[0]}"
+        error_detail = f"Comando não encontrado: {argv[0]}"
+        reply = error_detail
     except subprocess.TimeoutExpired:
         ok, output = False, ""
-        reply = f"O agente não respondeu em {timeout:.0f}s"
+        error_detail = f"O agente não respondeu em {timeout:.0f}s"
+        reply = error_detail
     log.info("[%s] %s: %s", name, "ok" if ok else "falhou", reply)
     if notify_reply or not ok:  # failures always surface, even on silent routes
-        notify(summarize(reply) or "Feito.", title=f"Ronaldo · {name}")
+        try:
+            notify(summarize(reply) or "Feito.", title=f"Ronaldo · {name}")
+        except (OSError, subprocess.SubprocessError):
+            log.exception("[%s] falha ao enviar notificação", name)
+    if hud:
+        from . import hud as hud_module
+        if ok:
+            hud_module.show("✅ " + summarize(output or "Entregue."), text, "ok", 6, req_id)
+        else:
+            hud_module.show("❌ Não entregou", summarize(error_detail or reply), "err", 12, req_id)
     return ok, reply
 
 

@@ -59,6 +59,8 @@ cooldown_seconds = 1.5
 language = "auto"         # idioma da transcrição no Hex; "auto" = idioma do macOS (pt-BR → pt)
 ```
 
+Nas rotas de comando, o HUD flutuante mostra a transcrição, o resultado e falhas sem tirar o foco da janela atual. Desative por rota com `hud = false`.
+
 **Rotas de agente:** o comando roda em segundo plano (a escuta não para), no diretório home e com o `PATH` do teu shell de login. O texto entra no lugar de `{text}`, como argumento separado (sem passar por shell) ou, sem placeholder, pelo stdin, e também fica em `$RONALDO_TEXT`. O que o comando imprimir vira uma notificação do macOS ("Ronaldo · <rota>"), e falhas e timeouts também viram notificação. Que permissões o agente tem é decisão tua, definida no próprio comando. Dica: peça ao agente pra responder em uma frase curta, porque a resposta vira push.
 
 Antes de cada ditado o Ronaldo confere o idioma do Hex e corrige se alguém tiver mudado.
