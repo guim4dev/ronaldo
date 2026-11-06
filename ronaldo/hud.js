@@ -1,45 +1,127 @@
 ObjC.import("Cocoa");
-ObjC.import("Foundation");
+ObjC.bindFunction("getppid", ["int", []]);
+
+var ppid = $.getppid();
 var argv = $.NSProcessInfo.processInfo.arguments;
-function arg(i) { return ObjC.unwrap(argv.objectAtIndex(i)); }
-var title = arg(4), body = arg(5), kind = arg(6), seconds = Math.max(0.1, Number(arg(7)) || 6);
-var bodyLines = String(body).split("\n"), visibleLines = [];
-bodyLines.forEach(function(line) {
-    while (line.length > 48) { visibleLines.push(line.slice(0, 48)); line = line.slice(48); }
-    visibleLines.push(line);
-});
-if (visibleLines.length > 8) {
-    visibleLines = visibleLines.slice(0, 8);
-    visibleLines[7] = visibleLines[7].slice(0, 45) + "…";
-}
-body = visibleLines.slice(0, 8).join("\n");
+var path = ObjC.unwrap(argv.objectAtIndex(4));
 var app = $.NSApplication.sharedApplication;
 app.setActivationPolicy($.NSApplicationActivationPolicyAccessory);
-var screen = $.NSScreen.mainScreen, vf = screen.visibleFrame;
-var width = 380, pad = 18;
-var lineCount = Math.max(1, String(body).split("\n").length);
-var bodyHeight = lineCount * 18;
-var height = Math.max(68, pad * 2 + 20 + 6 + bodyHeight);
-var frame = $.NSMakeRect(vf.origin.x + vf.size.width - width - 20, vf.origin.y + vf.size.height - height - 20, width, height);
+
+var screen = $.NSScreen.mainScreen;
+var visibleFrame = screen.visibleFrame;
+var width = 380;
+var padding = 18;
 var style = $.NSWindowStyleMaskBorderless | $.NSWindowStyleMaskNonactivatingPanel;
-var panel = $.NSPanel.alloc.initWithContentRectStyleMaskBackingDefer(frame, style, $.NSBackingStoreBuffered, false);
+var panel = $.NSPanel.alloc.initWithContentRectStyleMaskBackingDefer(
+    $.NSMakeRect(visibleFrame.origin.x + visibleFrame.size.width - width - 20,
+        visibleFrame.origin.y + visibleFrame.size.height - 88, width, 68),
+    style, $.NSBackingStoreBuffered, false
+);
 panel.setLevel($.NSStatusWindowLevel);
-panel.setCollectionBehavior($.NSWindowCollectionBehaviorCanJoinAllSpaces | $.NSWindowCollectionBehaviorFullScreenAuxiliary | $.NSWindowCollectionBehaviorStationary);
+panel.setCollectionBehavior(
+    $.NSWindowCollectionBehaviorCanJoinAllSpaces |
+    $.NSWindowCollectionBehaviorFullScreenAuxiliary |
+    $.NSWindowCollectionBehaviorStationary
+);
 panel.setIgnoresMouseEvents(true);
-panel.setOpaque(false); panel.setBackgroundColor($.NSColor.clearColor);
-var view = $.NSView.alloc.initWithFrame($.NSMakeRect(0,0,width,height));
-view.setWantsLayer(true); view.layer.setCornerRadius(14); view.layer.setMasksToBounds(true);
-var colors = {ok: $.NSColor.colorWithCalibratedRedGreenBlueAlpha(0.06,0.24,0.18,0.94), err: $.NSColor.colorWithCalibratedRedGreenBlueAlpha(0.32,0.08,0.08,0.95), warn: $.NSColor.colorWithCalibratedRedGreenBlueAlpha(0.32,0.22,0.05,0.95), info: $.NSColor.colorWithCalibratedRedGreenBlueAlpha(0.10,0.11,0.14,0.94)};
-view.layer.setBackgroundColor((colors[kind] || colors.info).CGColor);
+panel.setOpaque(false);
+panel.setBackgroundColor($.NSColor.clearColor);
+
+var view = $.NSView.alloc.initWithFrame($.NSMakeRect(0, 0, width, 68));
+view.setWantsLayer(true);
+view.layer.setCornerRadius(14);
+view.layer.setMasksToBounds(true);
+
+var colors = {
+    ok: $.NSColor.colorWithCalibratedRedGreenBlueAlpha(0.06, 0.24, 0.18, 0.94),
+    err: $.NSColor.colorWithCalibratedRedGreenBlueAlpha(0.32, 0.08, 0.08, 0.95),
+    warn: $.NSColor.colorWithCalibratedRedGreenBlueAlpha(0.32, 0.22, 0.05, 0.95),
+    info: $.NSColor.colorWithCalibratedRedGreenBlueAlpha(0.10, 0.11, 0.14, 0.94)
+};
+view.layer.setBackgroundColor(colors.info.CGColor);
 panel.setContentView(view);
-var titleFont = $.NSFont.boldSystemFontOfSize(15);
-var bodyFont = $.NSFont.systemFontOfSize(13);
-var t = $.NSTextField.alloc.initWithFrame($.NSMakeRect(pad,height-pad-20,width-2*pad,20));
-t.setStringValue(title); t.setBezeled(false); t.setDrawsBackground(false); t.setEditable(false); t.setSelectable(false); t.setTextColor($.NSColor.whiteColor); t.setFont(titleFont); view.addSubview(t);
-var b = $.NSTextField.alloc.initWithFrame($.NSMakeRect(pad,pad,width-2*pad,bodyHeight+4));
-b.setStringValue(body); b.setBezeled(false); b.setDrawsBackground(false); b.setEditable(false); b.setSelectable(false); b.setTextColor($.NSColor.whiteColor); b.setFont(bodyFont); b.setUsesSingleLineMode(false); b.cell.setWraps(true); b.cell.setScrollable(false); view.addSubview(b);
-panel.performSelector($.NSSelectorFromString("orderFrontRegardless"));
-$.NSFileHandle.fileHandleWithStandardError.writeData($("hud mostrado\n").dataUsingEncoding($.NSUTF8StringEncoding));
-var until = $.NSDate.dateWithTimeIntervalSinceNow(seconds);
-$.NSRunLoop.currentRunLoop.runUntilDate(until);
-panel.performSelector($.NSSelectorFromString("close"));
+
+var titleField = $.NSTextField.alloc.initWithFrame($.NSMakeRect(padding, 32, width - 2 * padding, 20));
+var bodyField = $.NSTextField.alloc.initWithFrame($.NSMakeRect(padding, padding, width - 2 * padding, 18));
+[titleField, bodyField].forEach(function (field) {
+    field.setBezeled(false);
+    field.setDrawsBackground(false);
+    field.setEditable(false);
+    field.setSelectable(false);
+    field.setTextColor($.NSColor.whiteColor);
+    view.addSubview(field);
+});
+titleField.setFont($.NSFont.boldSystemFontOfSize(15));
+bodyField.setFont($.NSFont.systemFontOfSize(13));
+bodyField.setUsesSingleLineMode(false);
+bodyField.cell.setWraps(true);
+bodyField.cell.setScrollable(false);
+panel.orderOut(null);
+
+var initialState = $.NSString.stringWithContentsOfFileEncodingError(
+    $(path), $.NSUTF8StringEncoding, null
+);
+var raw = initialState.isNil() ? "" : ObjC.unwrap(initialState);
+var id = null;
+var hide = 0;
+
+function showState(state) {
+    var lines = String(state.body || "").split("\n");
+    var visibleLines = [];
+    lines.forEach(function (line) {
+        while (line.length > 48) {
+            visibleLines.push(line.slice(0, 48));
+            line = line.slice(48);
+        }
+        visibleLines.push(line);
+    });
+    if (visibleLines.length > 8) {
+        visibleLines = visibleLines.slice(0, 8);
+        visibleLines[7] = visibleLines[7].slice(0, 45) + "…";
+    }
+
+    var body = visibleLines.join("\n");
+    var bodyHeight = Math.max(1, visibleLines.length) * 18;
+    var height = Math.max(68, 60 + bodyHeight);
+    view.setFrame($.NSMakeRect(0, 0, width, height));
+    panel.setFrameDisplay($.NSMakeRect(
+        visibleFrame.origin.x + visibleFrame.size.width - width - 20,
+        visibleFrame.origin.y + visibleFrame.size.height - height - 20,
+        width, height
+    ), false);
+    titleField.setFrame($.NSMakeRect(padding, height - padding - 20, width - 2 * padding, 20));
+    bodyField.setFrame($.NSMakeRect(padding, padding, width - 2 * padding, bodyHeight + 4));
+    titleField.setStringValue(String(state.title || ""));
+    bodyField.setStringValue(body);
+    view.layer.setBackgroundColor((colors[state.kind] || colors.info).CGColor);
+    panel.performSelector($.NSSelectorFromString("orderFrontRegardless"));
+    $.NSFileHandle.fileHandleWithStandardError.writeData(
+        $("hud mostrado " + state.id + "\n").dataUsingEncoding($.NSUTF8StringEncoding)
+    );
+    hide = Date.now() + Math.max(0.1, Number(state.seconds) || 6) * 1000;
+}
+
+while ($.getppid() === ppid) {
+    $.NSRunLoop.currentRunLoop.runUntilDate($.NSDate.dateWithTimeIntervalSinceNow(0.1));
+    var stateFile = $.NSString.stringWithContentsOfFileEncodingError(
+        $(path), $.NSUTF8StringEncoding, null
+    );
+    var text = stateFile.isNil() ? "" : ObjC.unwrap(stateFile);
+    if (text && text !== raw) {
+        raw = text;
+        try {
+            var state = JSON.parse(text);
+            if (String(state.id) !== String(id)) {
+                id = state.id;
+                showState(state);
+            }
+        } catch (error) {
+            // Ignore invalid or partially written JSON and retry on the next update.
+        }
+    }
+    if (hide && Date.now() >= hide) {
+        panel.orderOut(null);
+        hide = 0;
+    }
+}
+panel.orderOut(null);

@@ -184,6 +184,10 @@ class Listener:
 
     def run(self) -> None:
         cfg = self.cfg
+        if any(r.action == "command" and r.hud for r in cfg.routes):
+            import atexit
+            agent_hud.start()
+            atexit.register(agent_hud.stop)
         for r in cfg.routes:
             log.info("ouvindo '%s' → %s (limiar %.2f)", r.name, r.action if r.action == "type" else r.command[0], r.threshold)
         if any(r.action == "type" for r in cfg.routes) and not macos.is_trusted_for_accessibility():
