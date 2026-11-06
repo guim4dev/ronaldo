@@ -168,34 +168,44 @@ def test_two_concurrent_threads_ignore_old_request(monkeypatch, tmp_path):
     assert payload["n"] == 1
 
 
-def test_agent_timeout_does_not_prevent_final_hud(monkeypatch):
+def test_blocked_notification_does_not_delay_final_hud_or_run(monkeypatch):
+    import time
+
     calls = []
+    notify_started = threading.Event()
+    release_notify = threading.Event()
     monkeypatch.setattr(
         agent.subprocess,
         "run",
         lambda *args, **kwargs: SimpleNamespace(returncode=0, stdout="ok", stderr=""),
     )
-    monkeypatch.setattr(
-        agent,
-        "notify",
-        lambda *args, **kwargs: (_ for _ in ()).throw(
-            subprocess.TimeoutExpired("notify", 10)
-        ),
-    )
+
+    def blocked_notify(*args, **kwargs):
+        notify_started.set()
+        release_notify.wait()
+
+    monkeypatch.setattr(agent, "notify", blocked_notify)
     monkeypatch.setattr(hud, "show", lambda *args, **kwargs: calls.append(args))
 
-    assert agent.run(
-        ["cmd"],
-        "spoken words",
-        path="/bin",
-        timeout=1,
-        notify_reply=True,
-        name="route",
-        hud=True,
-        req_id=3,
-    )[0]
-    assert calls
-    assert calls[0][0].startswith("✅ ")
+    started = time.monotonic()
+    try:
+        result = agent.run(
+            ["cmd"],
+            "spoken words",
+            path="/bin",
+            timeout=1,
+            notify_reply=True,
+            name="route",
+            hud=True,
+            req_id=3,
+        )
+        elapsed = time.monotonic() - started
+        assert result[0]
+        assert elapsed < 1
+        assert calls and calls[0][0].startswith("✅ ")
+        assert notify_started.wait(timeout=1)
+    finally:
+        release_notify.set()
 
 
 def test_success_hud_body_is_summarized(monkeypatch):

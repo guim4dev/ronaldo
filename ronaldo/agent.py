@@ -60,17 +60,20 @@ def run(template: list[str], text: str, *, path: str, timeout: float, notify_rep
         error_detail = f"O agente não respondeu em {timeout:.0f}s"
         reply = error_detail
     log.info("[%s] %s: %s", name, "ok" if ok else "falhou", reply)
-    if notify_reply or not ok:  # failures always surface, even on silent routes
-        try:
-            notify(summarize(reply) or "Feito.", title=f"Ronaldo · {name}")
-        except (OSError, subprocess.SubprocessError):
-            log.exception("[%s] falha ao enviar notificação", name)
     if hud:
         from . import hud as hud_module
         if ok:
             hud_module.show("✅ " + summarize(output or "Entregue."), summarize(text), "ok", 6, req_id)
         else:
             hud_module.show("❌ Não entregou", summarize(error_detail or reply), "err", 12, req_id)
+    if notify_reply or not ok:  # failures always surface, even on silent routes
+        def send_notification() -> None:
+            try:
+                notify(summarize(reply) or "Feito.", title=f"Ronaldo · {name}")
+            except (OSError, subprocess.SubprocessError):
+                log.exception("[%s] falha ao enviar notificação", name)
+
+        threading.Thread(target=send_notification, daemon=True).start()
     return ok, reply
 
 
