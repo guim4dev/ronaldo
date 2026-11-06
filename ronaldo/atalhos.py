@@ -2,14 +2,13 @@
 from __future__ import annotations
 
 import json
-import re
 import os
+import re
 import shutil
 import subprocess
 import threading
 import time
 import unicodedata
-from dataclasses import dataclass
 
 _lock = threading.Lock()
 BOUNDARY = " ,.;:!?—-"
@@ -21,21 +20,17 @@ def _normalizar(value: str) -> str:
 
 def casar(texto: str, atalhos):
     for atalho in atalhos:
-        s = texto
         i = 0
-        while i < len(s) and (s[i].isspace() or unicodedata.category(s[i]).startswith("P")):
+        while i < len(texto) and (texto[i].isspace() or unicodedata.category(texto[i]).startswith("P")):
             i += 1
-        if _normalizar(s[i:i+7]) == "ronaldo" and (i+7 == len(s) or s[i+7].isspace() or unicodedata.category(s[i+7]).startswith("P")):
+        if _normalizar(texto[i:i + 7]) == "ronaldo" and (i + 7 == len(texto) or texto[i + 7].isspace() or unicodedata.category(texto[i + 7]).startswith("P")):
             i += 7
-            while i < len(s) and (s[i].isspace() or unicodedata.category(s[i]).startswith("P")):
+            while i < len(texto) and (texto[i].isspace() or unicodedata.category(texto[i]).startswith("P")):
                 i += 1
         for palavra in atalho["palavras"]:
-            token = s[i:i+len(palavra)]
             end = i + len(palavra)
-            if _normalizar(token) == _normalizar(palavra) and (end == len(s) or s[end].isspace() or s[end] in BOUNDARY):
-                resto = s[end:]
-                resto = re.sub(r"^[\s,.;:!?—]+", "", resto)
-                return atalho, resto
+            if _normalizar(texto[i:end]) == _normalizar(palavra) and (end == len(texto) or texto[end].isspace() or texto[end] in BOUNDARY):
+                return atalho, re.sub(r"^[\s,.;:!?—]+", "", texto[end:])
     return None
 
 
@@ -46,62 +41,59 @@ def _call(path, args):
     return subprocess.run([hc, *args], capture_output=True, text=True, timeout=10, env={**os.environ, "PATH": path})
 
 
-def entregar_terminal(nome_terminal, resto, path="/usr/bin:/bin", timeout=10):
+def _failure(name, reason, uncertain=False):
+    msg = f"entrega incerta ao {name}: {reason}" if uncertain else reason
+    return "falhou", msg
+
+
+def entregar_terminal(nome_terminal, resto, path="/usr/bin:/bin", timeout=10, nome=None):
+    nome = nome or nome_terminal
     if not resto.strip():
-        return False, "nada pra mandar ao batuqueiro"
+        return _failure(nome, f"nada pra mandar ao {nome}")
     with _lock:
+        sent_dispatched = False
         try:
             before = _call(path, ["get", nome_terminal, "--json"])
             if before.returncode:
-                return False, before.stderr.strip() or before.stdout.strip() or "batuqueiro não está de pé"
+                return _failure(nome, before.stderr.strip() or before.stdout.strip() or f"{nome} não está de pé")
             info = json.loads(before.stdout)
-            status = info.get("status", {})
-            labels = info.get("labels", {})
+            status, labels = info.get("status", {}), info.get("labels", {})
             if info.get("state") != "live" or status.get("app") != "claude-code" or labels.get("reino.batuqueiro") != "1":
-                return False, "batuqueiro não está de pé"
-            addr = info["address"]
-            turn_before = int(status.get("turn", 0))
+                return _failure(nome, f"{nome} não está de pé")
+            addr, turn_before = info["address"], int(info["turn"])
             state = status.get("state")
             if state == "blocked":
-                return False, "batuqueiro está esperando uma resposta (diálogo) — não mandei"
+                return _failure(nome, f"{nome} está esperando uma resposta (diálogo) — não mandei")
             if state not in ("working", "done", "idle"):
-                return False, "batuqueiro não está de pé"
+                return _failure(nome, f"{nome} não está de pé")
             if state in ("done", "idle"):
                 keys = _call(path, ["keys", addr, "ctrl+u", "--json"])
                 if keys.returncode:
-                    return False, keys.stderr.strip() or keys.stdout.strip()
-            sent_started = False
-            try:
-                sent = _call(path, ["send", addr, resto, "--json"])
-            except subprocess.TimeoutExpired:
-                return False, "entrega incerta ao batuqueiro (timeout após envio)"
-            sent_started = True
+                    return _failure(nome, keys.stderr.strip() or keys.stdout.strip() or "hc keys ctrl+u falhou")
+            sent_dispatched = True
+            sent = _call(path, ["send", addr, resto, "--json"])
             if sent.returncode:
-                return False, sent.stderr.strip() or sent.stdout.strip()
+                return _failure(nome, sent.stderr.strip() or sent.stdout.strip() or "hc send falhou", uncertain=True)
             try:
                 result = json.loads(sent.stdout)
-                if "started" not in result:
-                    raise ValueError("started ausente")
-            except (ValueError, TypeError) as exc:
-                return False, f"resposta inválida de hc send: {exc}"
-            if result["started"] is False and state in ("done", "idle"):
+                started = result["started"]
+            except (ValueError, TypeError, KeyError) as exc:
+                return _failure(nome, f"resposta inválida de hc send: {exc}", uncertain=True)
+            if started is False and state in ("done", "idle"):
                 enter = _call(path, ["keys", addr, "enter", "--json"])
                 if enter.returncode:
-                    return False, enter.stderr.strip() or enter.stdout.strip()
+                    return _failure(nome, enter.stderr.strip() or enter.stdout.strip() or "hc keys enter falhou", uncertain=True)
             deadline = time.monotonic() + min(timeout, 3)
             while time.monotonic() < deadline:
-                try:
-                    check = _call(path, ["get", addr, "--json"])
-                    if check.returncode == 0:
-                        now = json.loads(check.stdout).get("status", {})
-                        if now.get("state") == "working" or int(now.get("turn", 0)) > turn_before:
-                            return True, "Entregue ao batuqueiro."
-                except (subprocess.TimeoutExpired, ValueError, TypeError):
-                    pass
-            return True, "Enviado ao batuqueiro, sem confirmação"
-        except subprocess.TimeoutExpired:
-            return False, "timeout ao consultar batuqueiro"
-        except FileNotFoundError:
-            return False, "comando hc não encontrado"
-        except (ValueError, KeyError, TypeError) as exc:
-            return False, f"resposta inválida de hc: {exc}"
+                check = _call(path, ["get", addr, "--json"])
+                if check.returncode:
+                    return _failure(nome, check.stderr.strip() or check.stdout.strip() or "falha ao confirmar", uncertain=True)
+                now = json.loads(check.stdout)
+                if int(now.get("turn", 0)) > turn_before:
+                    return "entregue", f"Entregue ao {nome}."
+            return "sem_confirmacao", f"Enviado ao {nome}, sem confirmação"
+        except (subprocess.TimeoutExpired, OSError, ValueError, KeyError, TypeError) as exc:
+            reason = str(exc) or type(exc).__name__
+            if sent_dispatched:
+                return _failure(nome, reason, uncertain=True)
+            return _failure(nome, reason)

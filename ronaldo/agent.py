@@ -48,12 +48,15 @@ def run(template: list[str], text: str, *, path: str, timeout: float, notify_rep
         match = casar(text, atalhos)
         if match:
             shortcut, remainder = match
-            ok, message = entregar_terminal(shortcut["terminal"], remainder, path=path, timeout=10)
+            shortcut_name = shortcut.get("nome") or shortcut["terminal"]
+            status, message = entregar_terminal(shortcut["terminal"], remainder, path=path, timeout=10, nome=shortcut_name)
+            ok = status != "falhou"
+            log.info("[%s] atalho %s → %s: %s %s", name, shortcut_name, shortcut["terminal"], status, message)
             if hud:
                 from . import hud as hud_module
-                kind = "ok" if message == "Entregue ao batuqueiro." else ("warn" if ok else "err")
-                prefix = "✅ " if ok else "❌ "
-                title = message if ok else "Não entregou ao batuqueiro"
+                kind = {"entregue": "ok", "sem_confirmacao": "warn", "falhou": "err"}[status]
+                prefix = {"entregue": "✅ ", "sem_confirmacao": "⚠️ ", "falhou": "❌ "}[status]
+                title = message if status != "falhou" else f"Não entregou ao {shortcut_name}"
                 hud_module.show(prefix + title, summarize(remainder or message), kind, 6 if ok else 12, req_id)
             return ok, message
     argv, stdin = build_argv(template, text)

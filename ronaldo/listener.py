@@ -53,9 +53,6 @@ class Route:
         if self.action == "command" and not self.command:
             raise ValueError(f"route {self.model}: action 'command' needs a command")
         self.name = self.name or self.model_path().stem
-        for item in self.atalhos:
-            if not item.get("terminal") or not item.get("palavras"):
-                raise ValueError("atalho precisa de terminal e palavras")
         if self.atalhos and self.action != "command":
             raise ValueError("atalhos só são válidos em rotas command")
         for item in self.atalhos:
@@ -95,7 +92,8 @@ class Config:
             for route in kw["routes"]:
                 for shortcut in route.atalhos:
                     for word in shortcut["palavras"]:
-                        normalized = word.casefold()
+                        from .atalhos import _normalizar
+                        normalized = _normalizar(word)
                         if normalized in seen:
                             raise ValueError(f"palavra de atalho repetida: {word}")
                         seen.add(normalized)
