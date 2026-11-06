@@ -58,11 +58,7 @@ bodyField.cell.setWraps(true);
 bodyField.cell.setScrollable(false);
 panel.orderOut(null);
 
-var initialState = $.NSString.stringWithContentsOfFileEncodingError(
-    $(path), $.NSUTF8StringEncoding, null
-);
-var raw = initialState.isNil() ? "" : ObjC.unwrap(initialState);
-var id = null;
+var raw = "";
 var hide = 0;
 
 function showState(state) {
@@ -109,14 +105,21 @@ while ($.getppid() === ppid) {
     var text = stateFile.isNil() ? "" : ObjC.unwrap(stateFile);
     if (text && text !== raw) {
         raw = text;
+        var state;
         try {
-            var state = JSON.parse(text);
-            if (String(state.id) !== String(id)) {
-                id = state.id;
-                showState(state);
-            }
+            state = JSON.parse(text);
         } catch (error) {
             // Ignore invalid or partially written JSON and retry on the next update.
+            state = null;
+        }
+        if (state) {
+            try {
+                showState(state);
+            } catch (error) {
+                $.NSFileHandle.fileHandleWithStandardError.writeData(
+                    $("hud erro: " + error + "\n").dataUsingEncoding($.NSUTF8StringEncoding)
+                );
+            }
         }
     }
     if (hide && Date.now() >= hide) {
