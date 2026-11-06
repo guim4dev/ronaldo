@@ -57,7 +57,7 @@ def run(template: list[str], text: str, *, path: str, timeout: float, notify_rep
                 kind = {"entregue": "ok", "sem_confirmacao": "warn", "falhou": "err"}[status]
                 prefix = {"entregue": "✅ ", "sem_confirmacao": "⚠️ ", "falhou": "❌ "}[status]
                 title = message if status != "falhou" else f"Não entregou ao {shortcut_name}"
-                hud_module.show(prefix + title, summarize(remainder or message), kind, 6 if ok else 12, req_id)
+                hud_module.show(prefix + title, summarize(remainder if ok else message), kind, 6 if ok else 12, req_id)
             return ok, message
     argv, stdin = build_argv(template, text)
     env = {**os.environ, "PATH": path, "RONALDO_TEXT": text}

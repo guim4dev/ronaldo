@@ -91,6 +91,7 @@ def entregar_terminal(nome_terminal, resto, path="/usr/bin:/bin", timeout=10, no
                 now = json.loads(check.stdout)
                 if int(now.get("turn", 0)) > turn_before:
                     return "entregue", f"Entregue ao {nome}."
+                time.sleep(0.2)
             return "sem_confirmacao", f"Enviado ao {nome}, sem confirmação"
         except (subprocess.TimeoutExpired, OSError, ValueError, KeyError, TypeError) as exc:
             reason = str(exc) or type(exc).__name__

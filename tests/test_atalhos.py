@@ -128,6 +128,7 @@ def test_agent_shortcut_hud_and_no_fallback(monkeypatch):
     monkeypatch.setattr("ronaldo.atalhos.entregar_terminal", lambda *a, **k: ("falhou", "nope"))
     assert not agent.run(["corte"], "batuqueiro, toca", path="/mock", timeout=1, notify_reply=False, name="rota", hud=True, req_id=100, atalhos=[shortcut])[0]
     assert shown[-1][2:4] == ("err", 12) and shown[-1][-1] == 100
+    assert shown[-1][1] == "nope"
     monkeypatch.setattr("ronaldo.atalhos.entregar_terminal", lambda *a, **k: ("sem_confirmacao", "Enviado ao Batuqueiro, sem confirmação"))
     assert agent.run(["corte"], "batuqueiro, toca", path="/mock", timeout=1, notify_reply=False, name="rota", hud=True, req_id=101, atalhos=[shortcut])[0]
     assert shown[-1][2:4] == ("warn", 6) and shown[-1][-1] == 101
