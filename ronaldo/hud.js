@@ -3,11 +3,21 @@ ObjC.import("Foundation");
 var argv = $.NSProcessInfo.processInfo.arguments;
 function arg(i) { return ObjC.unwrap(argv.objectAtIndex(i)); }
 var title = arg(4), body = arg(5), kind = arg(6), seconds = Math.max(0.1, Number(arg(7)) || 6);
+var bodyLines = String(body).split("\n"), visibleLines = [];
+bodyLines.forEach(function(line) {
+    while (line.length > 48) { visibleLines.push(line.slice(0, 48)); line = line.slice(48); }
+    visibleLines.push(line);
+});
+if (visibleLines.length > 8) {
+    visibleLines = visibleLines.slice(0, 8);
+    visibleLines[7] = visibleLines[7].slice(0, 45) + "…";
+}
+body = visibleLines.slice(0, 8).join("\n");
 var app = $.NSApplication.sharedApplication;
 app.setActivationPolicy($.NSApplicationActivationPolicyAccessory);
 var screen = $.NSScreen.mainScreen, vf = screen.visibleFrame;
-var width = 380, pad = 18, lineCount = 0;
-String(body).split("\n").forEach(function(line) { lineCount += Math.max(1, Math.ceil(line.length / 48)); });
+var width = 380, pad = 18;
+var lineCount = Math.max(1, String(body).split("\n").length);
 var bodyHeight = lineCount * 18;
 var height = Math.max(68, pad * 2 + 20 + 6 + bodyHeight);
 var frame = $.NSMakeRect(vf.origin.x + vf.size.width - width - 20, vf.origin.y + vf.size.height - height - 20, width, height);

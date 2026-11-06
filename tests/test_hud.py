@@ -144,3 +144,14 @@ def test_notify_timeout_does_not_hide_final_hud(monkeypatch):
     monkeypatch.setattr(hud, "show", lambda *a, **k: calls.append(a))
     assert agent.run(["cmd"], "fala", path="/bin", timeout=1, notify_reply=True, name="r", hud=True)[0]
     assert calls and calls[0][0].startswith("✅ ")
+
+
+def test_success_hud_body_is_summarized(monkeypatch):
+    calls=[]
+    monkeypatch.setattr(agent.subprocess, "run", lambda *a, **k: SimpleNamespace(returncode=0, stdout="ok", stderr=""))
+    monkeypatch.setattr(agent, "notify", lambda *a, **k: None)
+    monkeypatch.setattr(hud, "show", lambda *a, **k: calls.append(a))
+    long_text = "fala " * 100
+    assert agent.run(["cmd"], long_text, path="/bin", timeout=1, notify_reply=True, name="r", hud=True)[0]
+    assert calls[0][1] == agent.summarize(long_text)
+    assert len(calls[0][1]) <= 240

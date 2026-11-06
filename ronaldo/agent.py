@@ -68,7 +68,7 @@ def run(template: list[str], text: str, *, path: str, timeout: float, notify_rep
     if hud:
         from . import hud as hud_module
         if ok:
-            hud_module.show("✅ " + summarize(output or "Entregue."), text, "ok", 6, req_id)
+            hud_module.show("✅ " + summarize(output or "Entregue."), summarize(text), "ok", 6, req_id)
         else:
             hud_module.show("❌ Não entregou", summarize(error_detail or reply), "err", 12, req_id)
     return ok, reply
