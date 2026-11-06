@@ -27,7 +27,7 @@ def setup_calls(monkeypatch, responses):
 
 
 def live(state="done", turn=4, **overrides):
-    info = {"address": "ADDR", "state": "live", "turn": turn,
+    info = {"address": "ADDR", "created_ms": 123, "state": "live", "turn": turn,
             "status": {"app": "claude-code", "state": state},
             "labels": {"reino.batuqueiro": "1"}}
     info.update(overrides)
@@ -48,20 +48,20 @@ def test_guards_and_blocked_never_send(monkeypatch):
 
 
 def test_working_sends_without_ctrl_u_and_turn_confirms(monkeypatch):
-    calls = setup_calls(monkeypatch, [result(live("working", 4)), result({"started": True}), result({"turn": 5, "status": {"state": "working"}})])
+    calls = setup_calls(monkeypatch, [result(live("working", 4)), result({"started": True}), result(live("working", 5))])
     assert entregar_terminal("term", "pedido", path="/mock") == ("entregue", "Entregue ao term.")
     assert [c[1:3] for c in calls] == [["get", "term"], ["send", "ADDR"], ["get", "ADDR"]]
 
 
 def test_done_ctrl_u_started_false_enters_once(monkeypatch):
-    calls = setup_calls(monkeypatch, [result(live()), result({}), result({"started": False}), result({}), result({"turn": 5})])
+    calls = setup_calls(monkeypatch, [result(live()), result({}), result({"started": False}), result({}), result(live("working", 5))])
     assert entregar_terminal("term", "pedido", path="/mock")[0] == "entregue"
     assert [c[1:3] for c in calls] == [["get", "term"], ["keys", "ADDR"], ["send", "ADDR"], ["keys", "ADDR"], ["get", "ADDR"]]
     assert calls[1][3] == "ctrl+u" and calls[3][3] == "enter"
 
 
 def test_started_true_no_enter_and_no_confirmation_if_only_working(monkeypatch):
-    calls = setup_calls(monkeypatch, [result(live()), result({}), result({"started": True}), result({"turn": 4, "status": {"state": "working"}})])
+    calls = setup_calls(monkeypatch, [result(live()), result({}), result({"started": True}), result(live("working", 4))])
     ticks = iter([0, 0, 5])
     monkeypatch.setattr("ronaldo.atalhos.time.monotonic", lambda: next(ticks))
     assert entregar_terminal("term", "pedido", path="/mock", timeout=3)[0] == "sem_confirmacao"
@@ -94,7 +94,7 @@ def test_lock_keeps_deliveries_sequential(monkeypatch):
         if argv[1] == "get":
             if argv[2] == "t":
                 return result(live("working", 0))
-            return result({"turn": 1})
+            return result(live("working", 1))
         if argv[1] == "send":
             entered.append(argv[3])
             if len(entered) == 1:
@@ -149,3 +149,52 @@ def test_first_of_two_shortcuts_matches_and_matched_hud_can_be_disabled(monkeypa
     monkeypatch.setattr("ronaldo.hud.show", lambda *a: shown.append(a))
     assert agent.run(["corte"], "batuqueiro, toca", path="/mock", timeout=1, notify_reply=False, name="rota", hud=False, atalhos=shortcuts)[0]
     assert not shown
+
+
+@pytest.mark.parametrize("payload", [{**live(), "status": None}, {**live(), "labels": None}, [], None])
+def test_invalid_initial_todo_fails_before_send(monkeypatch, payload):
+    calls = setup_calls(monkeypatch, [result(payload)])
+    status, message = entregar_terminal("term", "pedido", path="/mock")
+    assert status == "falhou" and "resposta inválida de hc" in message
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize("payload", [[], None, {**live(), "labels": None}])
+def test_invalid_confirmation_is_uncertain(monkeypatch, payload):
+    calls = setup_calls(monkeypatch, [result(live()), result({}), result({"started": True}), result(payload)])
+    status, message = entregar_terminal("term", "pedido", path="/mock")
+    assert status == "falhou" and "incerta" in message
+
+
+@pytest.mark.parametrize("started", [None, "false", 0, "missing"])
+def test_invalid_started_is_uncertain_without_enter(monkeypatch, started):
+    data = {} if started == "missing" else {"started": started}
+    calls = setup_calls(monkeypatch, [result(live()), result({}), result(data)])
+    status, message = entregar_terminal("term", "pedido", path="/mock")
+    assert status == "falhou" and "incerta" in message
+    assert not any(c[1:3] == ["keys", "ADDR"] and c[3] == "enter" for c in calls)
+
+
+@pytest.mark.parametrize("changed", [{"created_ms": 124}, {"status": {"app": "shell", "state": "working"}}, {"labels": {}}, {"turn": 100}])
+def test_confirmation_of_replaced_todo_is_uncertain(monkeypatch, changed):
+    confirmation = live("working", 5)
+    confirmation.update(changed)
+    calls = setup_calls(monkeypatch, [result(live()), result({}), result({"started": True}), result(confirmation)])
+    status, message = entregar_terminal("term", "pedido", path="/mock")
+    assert status == "falhou" and "incerta" in message and "foi substituído durante a entrega" in message
+
+
+def test_hc_json_error_uses_message_only(monkeypatch):
+    calls = setup_calls(monkeypatch, [result(live("working")), result({}, rc=1, stderr='{"error":{"message":"sem terminal"}}')])
+    status, message = entregar_terminal("term", "pedido", path="/mock")
+    assert status == "falhou" and message.endswith("sem terminal") and '{"error"' not in message
+
+
+def test_agent_shortcut_unexpected_exception_shows_error_hud_and_returns(monkeypatch):
+    shortcut = {"palavras": ["batuqueiro"], "terminal": "t", "nome": "Batuqueiro"}
+    monkeypatch.setattr("ronaldo.atalhos.entregar_terminal", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("inesperado")))
+    shown = []
+    monkeypatch.setattr("ronaldo.hud.show", lambda *a: shown.append(a))
+    result_value = agent.run(["corte"], "batuqueiro, toca", path="/mock", timeout=1, notify_reply=False, name="rota", hud=True, req_id=102, atalhos=[shortcut])
+    assert result_value == (False, "inesperado")
+    assert shown[-1][0].startswith("❌") and shown[-1][2] == "err"

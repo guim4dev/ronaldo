@@ -49,7 +49,11 @@ def run(template: list[str], text: str, *, path: str, timeout: float, notify_rep
         if match:
             shortcut, remainder = match
             shortcut_name = shortcut.get("nome") or shortcut["terminal"]
-            status, message = entregar_terminal(shortcut["terminal"], remainder, path=path, timeout=10, nome=shortcut_name)
+            try:
+                status, message = entregar_terminal(shortcut["terminal"], remainder, path=path, timeout=10, nome=shortcut_name)
+            except Exception as exc:
+                status, message = "falhou", str(exc) or type(exc).__name__
+                log.exception("[%s] exceção ao entregar atalho %s", name, shortcut_name)
             ok = status != "falhou"
             log.info("[%s] atalho %s → %s: %s %s", name, shortcut_name, shortcut["terminal"], status, message)
             if hud:

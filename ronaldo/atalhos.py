@@ -46,6 +46,42 @@ def _failure(name, reason, uncertain=False):
     return "falhou", msg
 
 
+def _hc_error(result):
+    raw = result.stderr.strip() or result.stdout.strip()
+    try:
+        error = json.loads(raw).get("error", {})
+        if isinstance(error, dict) and isinstance(error.get("message"), str):
+            return error["message"]
+    except (ValueError, AttributeError):
+        pass
+    return raw
+
+
+def _decode_todo(raw):
+    info = json.loads(raw)
+    if not isinstance(info, dict):
+        raise ValueError("resposta deve ser um objeto")
+    if not isinstance(info.get("status"), dict):
+        raise ValueError("status deve ser um objeto")
+    if not isinstance(info.get("labels"), dict):
+        raise ValueError("labels deve ser um objeto")
+    if not isinstance(info.get("address"), str) or not info["address"]:
+        raise ValueError("address deve ser uma string não vazia")
+    turn = info.get("turn")
+    if not isinstance(turn, int) or isinstance(turn, bool):
+        raise ValueError("turn deve ser um inteiro")
+    if "created_ms" not in info:
+        raise ValueError("created_ms ausente")
+    return info
+
+
+def _invalid_instance(info, address, created_ms):
+    return (info.get("address") != address or info.get("created_ms") != created_ms
+            or info.get("state") != "live"
+            or info["status"].get("app") != "claude-code"
+            or info["labels"].get("reino.batuqueiro") != "1")
+
+
 def entregar_terminal(nome_terminal, resto, path="/usr/bin:/bin", timeout=10, nome=None):
     nome = nome or nome_terminal
     if not resto.strip():
@@ -55,12 +91,15 @@ def entregar_terminal(nome_terminal, resto, path="/usr/bin:/bin", timeout=10, no
         try:
             before = _call(path, ["get", nome_terminal, "--json"])
             if before.returncode:
-                return _failure(nome, before.stderr.strip() or before.stdout.strip() or f"{nome} não está de pé")
-            info = json.loads(before.stdout)
-            status, labels = info.get("status", {}), info.get("labels", {})
+                return _failure(nome, _hc_error(before) or f"{nome} não está de pé")
+            try:
+                info = _decode_todo(before.stdout)
+            except (ValueError, TypeError) as exc:
+                return _failure(nome, f"resposta inválida de hc: {exc}")
+            status, labels = info["status"], info["labels"]
             if info.get("state") != "live" or status.get("app") != "claude-code" or labels.get("reino.batuqueiro") != "1":
                 return _failure(nome, f"{nome} não está de pé")
-            addr, turn_before = info["address"], int(info["turn"])
+            addr, created_ms, turn_before = info["address"], info["created_ms"], info["turn"]
             state = status.get("state")
             if state == "blocked":
                 return _failure(nome, f"{nome} está esperando uma resposta (diálogo) — não mandei")
@@ -73,10 +112,14 @@ def entregar_terminal(nome_terminal, resto, path="/usr/bin:/bin", timeout=10, no
             sent_dispatched = True
             sent = _call(path, ["send", addr, resto, "--json"])
             if sent.returncode:
-                return _failure(nome, sent.stderr.strip() or sent.stdout.strip() or "hc send falhou", uncertain=True)
+                return _failure(nome, _hc_error(sent) or "hc send falhou", uncertain=True)
             try:
                 result = json.loads(sent.stdout)
+                if not isinstance(result, dict):
+                    raise ValueError("resposta deve ser um objeto")
                 started = result["started"]
+                if not isinstance(started, bool):
+                    raise ValueError("started deve ser booleano")
             except (ValueError, TypeError, KeyError) as exc:
                 return _failure(nome, f"resposta inválida de hc send: {exc}", uncertain=True)
             if started is False and state in ("done", "idle"):
@@ -87,13 +130,20 @@ def entregar_terminal(nome_terminal, resto, path="/usr/bin:/bin", timeout=10, no
             while time.monotonic() < deadline:
                 check = _call(path, ["get", addr, "--json"])
                 if check.returncode:
-                    return _failure(nome, check.stderr.strip() or check.stdout.strip() or "falha ao confirmar", uncertain=True)
-                now = json.loads(check.stdout)
-                if int(now.get("turn", 0)) > turn_before:
+                    return _failure(nome, _hc_error(check) or "falha ao confirmar", uncertain=True)
+                try:
+                    now = _decode_todo(check.stdout)
+                except (ValueError, TypeError) as exc:
+                    return _failure(nome, f"resposta inválida de hc: {exc}", uncertain=True)
+                if _invalid_instance(now, addr, created_ms):
+                    return _failure(nome, f"{nome} foi substituído durante a entrega", uncertain=True)
+                if now["turn"] > turn_before:
+                    if now["turn"] != turn_before + 1:
+                        return _failure(nome, f"{nome} foi substituído durante a entrega", uncertain=True)
                     return "entregue", f"Entregue ao {nome}."
                 time.sleep(0.2)
             return "sem_confirmacao", f"Enviado ao {nome}, sem confirmação"
-        except (subprocess.TimeoutExpired, OSError, ValueError, KeyError, TypeError) as exc:
+        except Exception as exc:
             reason = str(exc) or type(exc).__name__
             if sent_dispatched:
                 return _failure(nome, reason, uncertain=True)
