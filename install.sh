@@ -17,9 +17,20 @@ echo "→ dependências"
 (cd "$ROOT" && uv sync --quiet)
 PY="$ROOT/.venv/bin/python"
 
-echo "→ CLI ronaldo-voz"
+echo "→ CLIs ronaldo e ronaldo-voz em ~/.local/bin"
 mkdir -p "$HOME/.local/bin"
+ln -sf "$ROOT/.venv/bin/ronaldo" "$HOME/.local/bin/ronaldo"
 ln -sf "$ROOT/.venv/bin/ronaldo-voz" "$HOME/.local/bin/ronaldo-voz"
+# The commands are on PATH only if the user's shell has ~/.local/bin there; it
+# isn't by default on macOS. Ask the login shell, the one a new terminal runs.
+case ":$("${SHELL:-/bin/zsh}" -ilc 'printf %s "$PATH"' 2>/dev/null):" in
+  *":$HOME/.local/bin:"*) ;;
+  *)
+    case "${SHELL:-/bin/zsh}" in */bash) RC="~/.bashrc" ;; *) RC="~/.zshrc" ;; esac
+    echo "  ~/.local/bin não está no PATH. Para usar ronaldo e ronaldo-voz, adicione ao $RC:"
+    echo '    export PATH="$HOME/.local/bin:$PATH"'
+    ;;
+esac
 
 echo "→ construindo $APP"
 mkdir -p "$APP/Contents/MacOS"

@@ -15,4 +15,5 @@ LABEL="${LABEL:-io.github.ronaldo}"
 launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
 rm -f "$HOME/Library/LaunchAgents/$LABEL.plist"
 rm -rf "$APP"
+rm -f "$HOME/.local/bin/ronaldo" "$HOME/.local/bin/ronaldo-voz"
 echo "Ronaldo removido. (Config em ~/.config/ronaldo e logs em ~/Library/Logs/ronaldo.log ficaram.)"
