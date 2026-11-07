@@ -106,6 +106,41 @@ Sem `[voz]`, a cadeia é `["say:Luciana"]`. Cada motor tem 4 s para sintetizar; 
 ou estourar, o próximo entra. `say:<Voz>` usa o `say` do macOS; `wyoming://host:porta#voz`
 usa um servidor Wyoming (Kokoro/Piper) e escreve um WAV temporário tocado com `afplay`.
 
+## Grito de gol
+
+Uma rota `action = "som"` toca um som local quando o modelo ouve o grito — sem "Ronaldo", sem Hex e
+sem passar pelo modo voz. O comando roda sem esperar e `~` é expandido em cada argumento.
+
+```toml
+[[routes]]
+model = "gol_grito.onnx"
+action = "som"
+command = ["/usr/bin/afplay", "-v", "0.6", "~/Music/Reino/gol-rematch.wav"]
+threshold = 0.6
+intervalo_seconds = 8
+grito_db_acima = 10
+```
+
+O portão de volume só libera quando o pico do RMS dos últimos ~1 s fica `grito_db_acima` dB acima da
+mediana da fala normal dos últimos ~5 min. Sem 20 s de fala acumulada não há referência e nada
+dispara: não existe piso absoluto, então cada boot recalibra. Se o ganho do microfone mudar mais de
+6 dB, a referência é invalidada e o log mostra `referência de grito recalibrando`; são precisos 20 s
+de fala nova. Nada é gravado em disco. `intervalo_seconds` limita novos disparos da mesma rota; as
+outras rotas continuam ouvindo, e um disparo não aplica o `cooldown_seconds` global.
+
+O som para na hora quando começa um ditado ("Ronaldo"), antes do Hex. O Falador espera o som acabar
+antes de falar uma resposta pronta, mas um som que dispara durante uma fala não interrompe a fala.
+
+Para calibrar sem gravar nem tocar nada:
+
+```sh
+uv run python tools/grito_ao_vivo.py 60                 # modelo da rota som do config
+uv run python tools/grito_ao_vivo.py 60 models/gol_grito.onnx
+```
+
+Ele imprime nota, nível e referência e diz `DISPARARIA` quando o portão libera. O
+`tools/live_test.py` também mostra nível dBFS e referência por linha.
+
 ## Ver funcionando
 
 ```sh
