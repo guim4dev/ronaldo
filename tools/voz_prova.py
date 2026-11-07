@@ -30,7 +30,7 @@ from ronaldo import agent, voz  # noqa: E402
 def enviar_fala(texto: str) -> tuple[str, str]:
     oid = uuid.uuid4().hex
     env = {**os.environ, "PATH": agent.login_path()}
-    argv = ["corte", "falar", "--id", oid, "--json", "--", texto]
+    argv = [voz.corte_bin(), "falar", "--id", oid, "--json", "--", texto]
     print(f"fala enviada: id={oid} corte={argv[0]} casa={env.get('REINO_CORTE_CASA', '-')}")
     resultado = subprocess.run(argv, capture_output=True, text=True, timeout=60, env=env, cwd=os.path.expanduser("~"))
     if resultado.returncode != 0:

@@ -45,6 +45,11 @@ INTERVALO_FALADOR = 1.0
 TIMEOUT_RESPOSTA = 10.0
 LIMITE_FALADOS = 500
 
+
+def corte_bin() -> str:
+    """Binário do corte (RONALDO_CORTE sobrescreve; padrão: `corte` do PATH de login)."""
+    return os.environ.get("RONALDO_CORTE") or "corte"
+
 # ---------------------------------------------------------------- estado
 
 
@@ -421,7 +426,7 @@ def _path_login() -> str:
 def consultar_resposta(id: str, reino: str, *, path: str | None = None, timeout: float = TIMEOUT_RESPOSTA) -> dict:
     """Roda `corte resposta <id> --reino <k> --json` e devolve o JSON."""
     env = {**os.environ, "PATH": path or _path_login()}
-    argv = ["corte", "resposta", str(id), "--reino", str(reino), "--json"]
+    argv = [corte_bin(), "resposta", str(id), "--reino", str(reino), "--json"]
     resultado = subprocess.run(
         argv,
         capture_output=True,
