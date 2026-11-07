@@ -36,6 +36,18 @@ As permissões ficam no `~/Applications/Ronaldo.app`, um executável mínimo em 
 
 Desinstalar: `./uninstall.sh`. O script usa `RONALDO_LABEL` se estiver definido; senão lê o `CFBundleIdentifier` do app instalado; senão usa o label padrão.
 
+## Ligar e desligar
+
+O Ronaldo e o Hex deixam o microfone aberto o tempo todo. Para parar os dois, inclusive depois de um novo login, e depois voltar:
+
+```sh
+ronaldo off      # para o Ronaldo e fecha o Hex; nenhum dos dois sobe no login
+ronaldo on       # liga os dois de novo
+ronaldo status   # o que está rodando (o padrão, sem argumento)
+```
+
+O `install.sh` coloca `ronaldo` e `ronaldo-voz` em `~/.local/bin`. Se essa pasta não estiver no `PATH` do teu shell, ele avisa a linha para pôr no `~/.zshrc` ou no `~/.bashrc`.
+
 ## Configurar
 
 `~/.config/ronaldo/config.toml`. Cada **rota** liga uma wake word a uma ação, e dá pra ter quantas quiser:

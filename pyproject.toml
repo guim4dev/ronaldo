@@ -16,6 +16,7 @@ dependencies = [
 
 [project.scripts]
 ronaldo-voz = "ronaldo.voz:main"
+ronaldo = "ronaldo.ctl:main"
 
 [dependency-groups]
 dev = [
