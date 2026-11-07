@@ -19,7 +19,7 @@ from pathlib import Path
 import numpy as np
 import sounddevice as sd
 
-from . import agent, hexcli, macos
+from . import agent, hexcli, macos, voz
 from . import hud as agent_hud
 from .detector import CHUNK, SAMPLE_RATE, VoiceActivity, WakeWord
 
@@ -46,6 +46,7 @@ class Route:
     timeout_seconds: float = 900  # command: give up on the agent after this long
     name: str = ""
     atalhos: list[dict] = field(default_factory=list)
+    voz: bool = False  # command: envia com --id e fala a resposta do rei (modo voz ligado)
 
     def __post_init__(self):
         if self.action not in ACTIONS:
@@ -55,6 +56,8 @@ class Route:
         self.name = self.name or self.model_path().stem
         if self.atalhos and self.action != "command":
             raise ValueError("atalhos só são válidos em rotas command")
+        if self.voz and self.action != "command":
+            raise ValueError("voz só é válida em rotas command")
         for item in self.atalhos:
             if not item.get("terminal") or not item.get("palavras"):
                 raise ValueError("atalho precisa de terminal e palavras")
@@ -73,6 +76,7 @@ class Config:
     vad_threshold: float = 0.5  # Silero speech probability counted as speech
     cooldown_seconds: float = 1.5  # ignore wake words right after a dictation
     language: str = "auto"  # Hex transcription language; "auto" = macOS preferred language
+    voz: dict = field(default_factory=dict)  # [voz]: motores e volume, lidos por voz.py
 
     def resolved_language(self) -> str:
         return system_language() if self.language == "auto" else self.language
@@ -167,6 +171,8 @@ class Listener:
     def _dictate(self, route: Route) -> None:
         use_hud = route.action == "command" and route.hud
         req_id = agent_hud.begin() if use_hud else None
+        voz.parar()  # a wake word corta qualquer fala em andamento
+        voz.marcar_gravando(True)
         try:
             if not hexcli.ensure_running():
                 if use_hud: agent_hud.show("⚠️ Não entendi", "Hex não está disponível.", "warn", 5, req_id)
@@ -188,7 +194,7 @@ class Listener:
             if route.action == "command":
                 if use_hud:
                     agent_hud.show("🎙️ Ronaldo ouviu", agent.summarize(text) + " — enviando…", "info", 6, req_id)
-                agent.dispatch(route.command, text, path=self.path, timeout=route.timeout_seconds, notify_reply=route.notify, name=route.name, hud=use_hud, req_id=req_id, atalhos=route.atalhos)
+                agent.dispatch(route.command, text, path=self.path, timeout=route.timeout_seconds, notify_reply=route.notify, name=route.name, hud=use_hud, req_id=req_id, atalhos=route.atalhos, voz=route.voz)
                 return
             log.info("colando %d caracteres%s", len(text), " + Enter" if route.press_enter else "")
             macos.type_and_submit(text, submit=route.press_enter)
@@ -196,6 +202,8 @@ class Listener:
             if use_hud:
                 agent_hud.show("⚠️ Não entendi", agent.summarize(str(exc)) or "Falha no ditado.", "warn", 5, req_id)
             raise
+        finally:
+            voz.marcar_gravando(False)
 
     def run(self) -> None:
         cfg = self.cfg
