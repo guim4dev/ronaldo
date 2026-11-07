@@ -17,6 +17,10 @@ echo "→ dependências"
 (cd "$ROOT" && uv sync --quiet)
 PY="$ROOT/.venv/bin/python"
 
+echo "→ CLI ronaldo-voz"
+mkdir -p "$HOME/.local/bin"
+ln -sf "$ROOT/.venv/bin/ronaldo-voz" "$HOME/.local/bin/ronaldo-voz"
+
 echo "→ construindo $APP"
 mkdir -p "$APP/Contents/MacOS"
 clang -O2 -o "$APP/Contents/MacOS/Ronaldo" \

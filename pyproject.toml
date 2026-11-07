@@ -1,3 +1,7 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
 [project]
 name = "ronaldo"
 version = "0.1.0"
@@ -7,7 +11,11 @@ dependencies = [
     "numpy>=2.5.4",
     "onnxruntime>=1.20",
     "sounddevice>=0.5.6",
+    "wyoming>=1.11.0",
 ]
+
+[project.scripts]
+ronaldo-voz = "ronaldo.voz:main"
 
 [dependency-groups]
 dev = [
@@ -20,3 +28,6 @@ dev = [
 testpaths = ["tests"]
 pythonpath = ["."]
 filterwarnings = ["ignore::UserWarning"]
+
+[tool.uv]
+package = true

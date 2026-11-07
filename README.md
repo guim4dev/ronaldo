@@ -67,6 +67,44 @@ Antes de cada ditado o Ronaldo confere o idioma do Hex e corrige se alguém tive
 
 Reinicie após mudar: `launchctl kickstart -k gui/$(id -u)/dev.guima.ronaldo`.
 
+## Modo voz
+
+O rei pode responder **falando**, se o `corte` souber devolver a resposta. Ligue e
+desligue por voz ("Ronaldo, modo voz" / "Ronaldo, modo texto") ou pela CLI:
+
+```sh
+ronaldo-voz on       # liga
+ronaldo-voz off      # desliga e para a fala atual
+ronaldo-voz status
+ronaldo-voz falar "teste do motor"   # fala direto, sem passar pelo rei
+```
+
+O estado fica em `~/.config/ronaldo/modo-voz.json` (`{"ligado": true}`) e é lido a cada
+uso. Só rotas `command` com `voz = true` entram no modo voz; as outras continuam como
+antes. Com o modo ligado, a rota chama `corte falar --id <uuid> --json -- <texto>` e um
+Falador consulta `corte resposta <id> --reino <k> --json` a cada segundo; quando a
+resposta fica `pronta`, ele fala uma vez. Cada id falado fica em
+`~/.config/ronaldo/falados.json` (últimos 500), então reiniciar não repete resposta.
+
+A wake word para a fala na hora, e nada fala enquanto o ditado está gravando. A cadeia de
+motores e o volume vêm de `[voz]` no `config.toml`:
+
+```toml
+[[routes]]
+model = "ronaldo_ptbr.onnx"
+action = "command"
+command = ["/Users/guima/.local/bin/corte", "falar", "{text}"]
+voz = true
+
+[voz]
+motores = ["wyoming://omarchy:10201#kokoro:pm_alex", "wyoming://omarchy:10200#pt_BR-faber-medium", "say:Luciana"]
+volume = 0.3   # afplay -v
+```
+
+Sem `[voz]`, a cadeia é `["say:Luciana"]`. Cada motor tem 4 s para sintetizar; se falhar
+ou estourar, o próximo entra. `say:<Voz>` usa o `say` do macOS; `wyoming://host:porta#voz`
+usa um servidor Wyoming (Kokoro/Piper) e escreve um WAV temporário tocado com `afplay`.
+
 ## Ver funcionando
 
 ```sh
