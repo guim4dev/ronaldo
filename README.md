@@ -1,6 +1,6 @@
 # Ronaldo
 
-Ditado mãos-livres para macOS em cima do [Hex](https://hex.kitlangton.com): você fala uma wake word, fala o que quiser e faz uma pausa. Conforme a palavra, o texto é **digitado no app em foco** (com Enter) ou **enviado para um agente** (Claude Code, Codex, Hermes…), e a resposta do agente aparece como notificação.
+Ditado mãos-livres para macOS em cima do [Hex](https://github.com/anomalyco/hex): você fala uma wake word, fala o que quiser e faz uma pausa. Conforme a palavra, o texto é **digitado no app em foco** (com Enter) ou **enviado para um agente** (Claude Code, Codex, Hermes…), e a resposta do agente aparece como notificação.
 
 ```
 "Ronaldo"  →  hex dictation start  →  você fala  →  ~2 s de silêncio  →  hex dictation stop --print  →  cola + Enter
@@ -12,11 +12,13 @@ Ditado mãos-livres para macOS em cima do [Hex](https://hex.kitlangton.com): voc
 
 ## Instalar
 
-Requisitos: macOS, [Hex](https://hex.kitlangton.com) em `/Applications`, [`uv`](https://docs.astral.sh/uv/) e Xcode Command Line Tools (`clang`).
+Requisitos: macOS, [Hex](https://github.com/anomalyco/hex) 3 ou mais novo em `/Applications` (`brew install --cask anomalyco/tap/hex`), [`uv`](https://docs.astral.sh/uv/) e Xcode Command Line Tools (`clang`).
 
 ```sh
 ./install.sh
 ```
+
+O Ronaldo usa o CLI `hex` do Hex atual, o app em Rust da Anomaly. O Hex antigo em Swift (`kitlangton/Hex`, cask `kitlangton-hex`) foi arquivado, não tem esse CLI e não funciona com o Ronaldo. Se ele estiver em `/Applications`, troque pelo novo.
 
 O LaunchAgent usa o label `io.github.ronaldo`. Para instalar com outro label, defina `RONALDO_LABEL`:
 

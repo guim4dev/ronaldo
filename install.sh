@@ -10,7 +10,15 @@ PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 LOG="$HOME/Library/Logs/ronaldo.log"
 HEX="/Applications/Hex.app/Contents/MacOS/hex"
 
-[[ -x "$HEX" ]] || { echo "Hex não encontrado em /Applications/Hex.app" >&2; exit 1; }
+[[ -x "$HEX" ]] || { echo "Hex não encontrado em /Applications/Hex.app: brew install --cask anomalyco/tap/hex" >&2; exit 1; }
+# The archived Swift Hex (com.kitlangton.Hex) has no hex CLI, but its "Hex" binary
+# passes the check above on a case-insensitive disk. Only the Rust app (anomaly.hex) works.
+BUNDLE_ID="$(defaults read /Applications/Hex.app/Contents/Info CFBundleIdentifier 2>/dev/null || true)"
+[[ "$BUNDLE_ID" == anomaly.hex ]] || {
+  echo "/Applications/Hex.app é o Hex antigo em Swift ($BUNDLE_ID), sem o CLI hex." >&2
+  echo "Troque pelo atual: brew uninstall --cask kitlangton-hex && brew install --cask anomalyco/tap/hex" >&2
+  exit 1
+}
 command -v uv >/dev/null || { echo "precisa do uv: brew install uv" >&2; exit 1; }
 
 echo "→ dependências"
