@@ -478,15 +478,20 @@ def test_falador_desligado_para_a_fala_e_esvazia_a_fila(tmp_path):
         intervalo=0.05,
         automatico=True,
     )
-    f.enfileirar("pessoal", "a", quando=f.relogio())
-    f.enfileirar("pessoal", "b", quando=f.relogio())
-    assert comecou.wait(3)
-    voz.desligar(estado)
-    limite = time.monotonic() + 3
-    while time.monotonic() < limite and (not f.ja_falado("a") or f.pendentes()):
-        time.sleep(0.05)
-    assert f.ja_falado("a")
-    assert f.pendentes() == []
+    try:
+        f.enfileirar("pessoal", "a", quando=f.relogio())
+        f.enfileirar("pessoal", "b", quando=f.relogio())
+        assert comecou.wait(3)
+        voz.desligar(estado)
+        limite = time.monotonic() + 3
+        while time.monotonic() < limite and (not f.ja_falado("a") or f.pendentes()):
+            time.sleep(0.05)
+        assert f.ja_falado("a")
+        assert f.pendentes() == []
+    finally:
+        f._parar_thread.set()
+        f._thread.join(1)
+        f._vigia.join(1)
 
 
 def test_falador_gravando_impede_nova_fala(tmp_path):
