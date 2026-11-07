@@ -70,7 +70,8 @@ Reinicie após mudar: `launchctl kickstart -k gui/$(id -u)/dev.guima.ronaldo`.
 ## Modo voz
 
 O rei pode responder **falando**, se o `corte` souber devolver a resposta. Ligue e
-desligue por voz ("Ronaldo, modo voz" / "Ronaldo, modo texto") ou pela CLI:
+desligue por voz ("Ronaldo, modo voz", "liga o modo tts", "liga a voz" / "Ronaldo, modo texto",
+"desliga o modo fala", "desliga a voz"; só fala curta, até 5 palavras) ou pela CLI:
 
 ```sh
 ronaldo-voz on       # liga

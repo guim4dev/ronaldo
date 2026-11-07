@@ -102,6 +102,19 @@ def test_estado_ligado_desligado_no_arquivo(tmp_path):
         ("qual o modo voz do ronaldo", None),
         ("modo voz agora mesmo por favor", None),
         ("", None),
+        # frases reais do Guima (2026-11-07) e variações pedidas
+        ("Ligar modo TTS", "ligar"),
+        ("Ronaldo, liga o modo fala.", "ligar"),
+        ("ativar modo tts", "ligar"),
+        ("Liga a voz", "ligar"),
+        ("modo fala", "ligar"),
+        ("desligar modo TTS", "desligar"),
+        ("desliga o modo fala", "desligar"),
+        ("desativar modo voz", "desligar"),
+        ("Desliga a voz!", "desligar"),
+        ("O modo fala tá ligado?", None),  # pergunta, não comando: vai pro rei
+        ("liga a voz do rei agora por favor", None),  # mais de 5 palavras
+        ("modo tts é bom", None),
     ],
 )
 def test_comando_modo(texto, esperado):

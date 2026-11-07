@@ -741,8 +741,11 @@ def falar_agora(texto: str) -> bool:
 # ---------------------------------------------------------------- comandos
 
 
-FRASES_LIGAR = {"modo voz", "ligar modo voz", "liga o modo voz"}
-FRASES_DESLIGAR = {"modo texto", "desligar modo voz", "desliga o modo voz"}
+_MODOS = ("modo voz", "modo tts", "modo fala")
+_VERBOS_LIGAR = ("", "ligar ", "liga o ", "ativar ", "ativa o ")
+_VERBOS_DESLIGAR = ("desligar ", "desliga o ", "desativar ", "desativa o ")
+FRASES_LIGAR = {v + m for v in _VERBOS_LIGAR for m in _MODOS} | {"liga a voz", "ligar a voz"}
+FRASES_DESLIGAR = {v + m for v in _VERBOS_DESLIGAR for m in _MODOS} | {"modo texto", "desliga a voz", "desligar a voz"}
 
 
 def normalizar_comando(texto: str) -> str:
