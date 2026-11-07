@@ -12,10 +12,22 @@ dependencies = [
     "datasets>=3.0",
     "huggingface-hub>=0.26",
     "edge-tts>=7.0",
+    # treino do classificador (CPU) e export ONNX
+    "torch>=2.4",
+    "onnx>=1.16",
 ]
 
 [tool.uv]
 package = false
+
+# torch CPU: sem as rodas CUDA (varios GB de nvidia-* que nao usamos).
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
 
 [dependency-groups]
 dev = [
