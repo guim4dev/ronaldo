@@ -780,3 +780,21 @@ def test_cli_uso_invalido(capsys):
     assert voz.main([]) == 2
     assert voz.main(["nada"]) == 2
     assert "uso" in capsys.readouterr().err
+
+
+def test_consultar_resposta_poe_reino_antes_do_subcomando(monkeypatch):
+    """`--reino` é opção global do corte: depois de `resposta` o argparse recusa (achado na prova real)."""
+    import subprocess as sp
+
+    from ronaldo import voz
+
+    visto = {}
+
+    def fake_run(argv, **kw):
+        visto["argv"] = argv
+        return sp.CompletedProcess(argv, 0, stdout='{"estado": "pronta", "texto": "oi", "em": 1.0}', stderr="")
+
+    monkeypatch.setattr(voz.subprocess, "run", fake_run)
+    monkeypatch.setenv("RONALDO_CORTE", "/x/corte")
+    assert voz.consultar_resposta("a" * 32, "pessoal", path="/bin")["texto"] == "oi"
+    assert visto["argv"] == ["/x/corte", "--reino", "pessoal", "resposta", "a" * 32, "--json"]

@@ -82,7 +82,7 @@ ronaldo-voz falar "teste do motor"   # fala direto, sem passar pelo rei
 O estado fica em `~/.config/ronaldo/modo-voz.json` (`{"ligado": true}`) e é lido a cada
 uso. Só rotas `command` com `voz = true` entram no modo voz; as outras continuam como
 antes. Com o modo ligado, a rota chama `corte falar --id <uuid> --json -- <texto>` e um
-Falador consulta `corte resposta <id> --reino <k> --json` a cada segundo; quando a
+Falador consulta `corte --reino <k> resposta <id> --json` a cada segundo; quando a
 resposta fica `pronta`, ele fala uma vez. Cada id falado fica em
 `~/.config/ronaldo/falados.json` (últimos 500), então reiniciar não repete resposta.
 

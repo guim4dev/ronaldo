@@ -424,9 +424,9 @@ def _path_login() -> str:
 
 
 def consultar_resposta(id: str, reino: str, *, path: str | None = None, timeout: float = TIMEOUT_RESPOSTA) -> dict:
-    """Roda `corte resposta <id> --reino <k> --json` e devolve o JSON."""
+    """Roda `corte --reino <k> resposta <id> --json` e devolve o JSON."""
     env = {**os.environ, "PATH": path or _path_login()}
-    argv = [corte_bin(), "resposta", str(id), "--reino", str(reino), "--json"]
+    argv = [corte_bin(), "--reino", str(reino), "resposta", str(id), "--json"]  # --reino é opção global do corte
     resultado = subprocess.run(
         argv,
         capture_output=True,
