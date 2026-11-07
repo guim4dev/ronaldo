@@ -29,6 +29,7 @@ except ModuleNotFoundError:  # pragma: no cover - Python 3.12 always has it
     import tomli as tomllib  # type: ignore[no-redef]
 
 from .agent import login_path
+from . import som as som_mod
 
 log = logging.getLogger("ronaldo.voz")
 
@@ -101,6 +102,11 @@ def marcar_gravando(valor: bool) -> None:
 
 def gravando() -> bool:
     return _gravando.is_set()
+
+
+def _ocupado() -> bool:
+    """Gravando um ditado ou tocando o som de uma rota `som`."""
+    return gravando() or som_mod.tocando()
 
 
 # ---------------------------------------------------------------- texto
@@ -504,7 +510,7 @@ class Falador:
         self.prazo = prazo
         self.relogio = relogio or time.monotonic
         self._ligado_fn = ligado_fn or (lambda: _ligado(self.estado))
-        self._gravando_fn = gravando_fn or gravando
+        self._gravando_fn = gravando_fn or _ocupado
         self.automatico = automatico
 
         self._lock = threading.Lock()

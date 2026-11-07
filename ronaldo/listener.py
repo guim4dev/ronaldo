@@ -1,7 +1,8 @@
 """Say a wake word -> Hex records -> silence ends it -> the route decides what happens.
 
-A route either types the text into the focused app (+ Enter) or hands it to an
-agent command (fire and forget, reply pushed as a notification).
+A route either types the text into the focused app (+ Enter), hands it to an
+agent command (fire and forget, reply pushed as a notification), or plays a
+local sound when the gate accepts the shout (no dictation, no Hex).
 """
 
 from __future__ import annotations
@@ -19,9 +20,10 @@ from pathlib import Path
 import numpy as np
 import sounddevice as sd
 
-from . import agent, hexcli, macos, voz
+from . import agent, hexcli, macos, som as som_mod, voz
 from . import hud as agent_hud
 from .detector import CHUNK, SAMPLE_RATE, VoiceActivity, WakeWord
+from .grito import PortaoGrito
 
 log = logging.getLogger("ronaldo")
 
@@ -31,13 +33,13 @@ CONFIG = Path.home() / ".config" / "ronaldo" / "config.toml"
 LOCK = Path.home() / "Library" / "Caches" / "ronaldo.lock"
 
 
-ACTIONS = ("type", "command")
+ACTIONS = ("type", "command", "som")
 
 
 @dataclass
 class Route:
     model: str  # file in models/ or an absolute path
-    action: str = "type"  # "type" into the focused app, or run "command"
+    action: str = "type"  # "type" into the focused app, "command" for an agent, "som" for a local sound
     command: list[str] = field(default_factory=list)  # argv; "{text}" is replaced, else text goes to stdin
     threshold: float = 0.5  # wake word score that triggers
     press_enter: bool = True  # type: press Return after pasting
@@ -47,12 +49,14 @@ class Route:
     name: str = ""
     atalhos: list[dict] = field(default_factory=list)
     voz: bool = False  # command: envia com --id e fala a resposta do rei (modo voz ligado)
+    intervalo_seconds: float = 8.0  # som: mínimo entre disparos da mesma rota
+    grito_db_acima: float = 10.0  # som: nível acima da fala normal que libera o grito
 
     def __post_init__(self):
         if self.action not in ACTIONS:
             raise ValueError(f"route {self.model}: action must be one of {ACTIONS}, got {self.action!r}")
-        if self.action == "command" and not self.command:
-            raise ValueError(f"route {self.model}: action 'command' needs a command")
+        if self.action in ("command", "som") and not self.command:
+            raise ValueError(f"route {self.model}: action {self.action!r} needs a command")
         self.name = self.name or self.model_path().stem
         if self.atalhos and self.action != "command":
             raise ValueError("atalhos só são válidos em rotas command")
@@ -129,14 +133,20 @@ def system_language() -> str:
 
 
 class Listener:
-    def __init__(self, cfg: Config):
+    som: som_mod.SomPlayer | None = None  # __new__ em testes não passa pelo __init__
+
+    def __init__(self, cfg: Config, *, wake=None, vad=None, som_player=None):
         self.cfg = cfg
         self.routes = {r.name: r for r in cfg.routes}
-        self.wake = WakeWord([r.model_path() for r in cfg.routes], MODELS)
-        self.path = agent.login_path() if any(r.action == "command" for r in cfg.routes) else ""
-        self.vad = VoiceActivity(MODELS)
+        self.wake = wake if wake is not None else WakeWord([r.model_path() for r in cfg.routes], MODELS)
+        self.path = agent.login_path() if any(r.action in ("command", "som") for r in cfg.routes) else ""
+        self.vad = vad if vad is not None else VoiceActivity(MODELS)
+        self.som = som_player if som_player is not None else som_mod.padrao()
+        self.grito = PortaoGrito() if any(r.action == "som" for r in cfg.routes) else None
         self.audio: queue.Queue[np.ndarray] = queue.Queue(maxsize=200)
         self.quiet_until = 0.0
+        self._chunks = 0
+        self._ultimo_som: dict[str, int] = {}
 
     def _on_audio(self, data, frames, t, status) -> None:
         try:
@@ -182,6 +192,8 @@ class Listener:
     def _dictate(self, route: Route) -> None:
         use_hud = route.action == "command" and route.hud
         req_id = agent_hud.begin() if use_hud else None
+        if self.som is not None:
+            self.som.stop()  # o ditado tem prioridade: o som para antes do Hex
         voz.parar()  # a wake word corta qualquer fala em andamento
         voz.marcar_gravando(True)
         try:
@@ -216,6 +228,42 @@ class Listener:
         finally:
             voz.marcar_gravando(False)
 
+    def processar_chunk(self, chunk: np.ndarray) -> Route | None:
+        """Feed one chunk; a `som` route fires here and never starts a dictation.
+
+        Returns the route that should dictate, or None.
+        """
+        self._chunks += 1
+        if self.grito is not None:
+            fala = self.vad.speech_prob(chunk) >= self.cfg.vad_threshold
+            self.grito.observar(chunk, fala)
+        scores = self.wake.scores(chunk)
+        route = self._pick(scores)
+        if route is None or time.monotonic() < self.quiet_until:
+            return None
+        if route.action == "som":
+            self._tentar_som(route, scores[route.name])
+            return None
+        log.info("wake word '%s' (nota %.2f)", route.name, scores[route.name])
+        return route
+
+    def _tentar_som(self, route: Route, nota: float) -> bool:
+        """Passa pelo portão de grito, respeita o intervalo e toca o comando."""
+        if self.grito is None or self.som is None:
+            return False
+        decisao = self.grito.avaliar(nota, route.grito_db_acima)
+        if not decisao.liberado:
+            return False
+        passo = CHUNK / SAMPLE_RATE
+        ultimo = self._ultimo_som.get(route.name)
+        if ultimo is not None and (self._chunks - ultimo) * passo < route.intervalo_seconds:
+            log.info("grito '%s': intervalo de %.1f s ainda não passou", route.name, route.intervalo_seconds)
+            return False
+        if not self.som.tocar(route.command, path=self.path or som_mod.PATH_PADRAO, nome=route.name):
+            return False
+        self._ultimo_som[route.name] = self._chunks
+        return True
+
     def run(self) -> None:
         cfg = self.cfg
         if any(r.action == "command" and r.hud for r in cfg.routes):
@@ -228,11 +276,9 @@ class Listener:
             log.warning("sem permissão de Acessibilidade: o texto não vai ser colado nem o Enter enviado")
         with sd.InputStream(samplerate=SAMPLE_RATE, channels=1, dtype="int16", blocksize=CHUNK, callback=self._on_audio):
             while True:
-                scores = self.wake.scores(self.audio.get())
-                route = self._pick(scores)
-                if route is None or time.monotonic() < self.quiet_until:
+                route = self.processar_chunk(self.audio.get())
+                if route is None:
                     continue
-                log.info("wake word '%s' (nota %.2f)", route.name, scores[route.name])
                 try:
                     self._dictate(route)
                 except Exception:
