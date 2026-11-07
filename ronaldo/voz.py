@@ -489,6 +489,7 @@ class Falador:
         self._parar_thread = threading.Event()
         self._speak_lock = threading.Lock()
         self._atual: str | None = None
+        self._cancelar = 0
         self._ids = self._carregar()
 
     # -- persistência
@@ -598,6 +599,8 @@ class Falador:
             if not self._ligado_fn() or self._gravando_fn():
                 return
             with self._lock:
+                if self._gravando_fn():  # a wake word chegou entre a consulta e a fala
+                    return
                 if item.id in self._ids:
                     if item in self._fila:
                         self._fila.remove(item)
@@ -606,9 +609,10 @@ class Falador:
                     self._fila.remove(item)
                 self._marcar(item.id)
                 self._atual = item.id
-            self._falar_pronto(item, texto, em)
+                cancelar = self._cancelar
+            self._falar_pronto(item, texto, em, cancelar)
 
-    def _falar_pronto(self, item: _Pendente, texto: str, em: object) -> None:
+    def _falar_pronto(self, item: _Pendente, texto: str, em: object, cancelar: int) -> None:
         fala = essencial(texto)
         log.info("voz: resposta pronta reino=%s id=%s em=%s", item.reino, item.id, em)
         if not fala:
@@ -619,6 +623,12 @@ class Falador:
         if isinstance(em, (int, float)) and not isinstance(em, bool):
             latencia = max(0.0, time.time() - float(em))
         with self._speak_lock:
+            with self._lock:
+                interrompido = cancelar != self._cancelar
+                if interrompido:
+                    self._atual = None
+            if interrompido:
+                return
             if latencia is None:
                 log.info("voz: começou")
             else:
@@ -654,6 +664,7 @@ class Falador:
         """Mata o áudio na hora e marca o item atual como falado."""
         self.player.stop()
         with self._lock:
+            self._cancelar += 1
             if self._atual is not None:
                 self._marcar(self._atual)
                 self._atual = None
@@ -662,6 +673,7 @@ class Falador:
         """Modo desligado: para a fala atual e joga a fila fora."""
         self.player.stop()
         with self._lock:
+            self._cancelar += 1
             if self._atual is not None:
                 self._marcar(self._atual)
                 self._atual = None
