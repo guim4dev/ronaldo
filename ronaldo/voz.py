@@ -236,9 +236,18 @@ class Player:
         self._proc: subprocess.Popen | None = None
         self._epoca = 0
 
-    def run(self, argv: list[str], *, timeout: float | None = None) -> int:
+    @property
+    def epoca(self) -> int:
+        """Muda a cada stop(): quem guardou a época sabe que foi cancelado."""
+        with self._estado:
+            return self._epoca
+
+    def run(self, argv: list[str], *, timeout: float | None = None, epoca: int | None = None) -> int:
+        """Roda um processo de áudio. Com `epoca`, não roda se houve stop() desde ela."""
         with self._execucao:
             with self._estado:
+                if epoca is not None and epoca != self._epoca:
+                    return -1  # cancelado antes de começar (ex.: parar() durante a síntese)
                 epoca = self._epoca
             try:
                 proc = subprocess.Popen(
@@ -265,8 +274,8 @@ class Player:
                     if self._proc is proc:
                         self._proc = None
 
-    def play(self, caminho: str | Path, volume: float) -> bool:
-        return self.run(["afplay", "-v", f"{volume:g}", str(caminho)]) == 0
+    def play(self, caminho: str | Path, volume: float, epoca: int | None = None) -> bool:
+        return self.run(["afplay", "-v", f"{volume:g}", str(caminho)], epoca=epoca) == 0
 
     def stop(self) -> None:
         with self._estado:
@@ -295,9 +304,9 @@ def _temporario(sufixo: str) -> str:
     return caminho
 
 
-def _sintetizar_say(texto: str, voz: str, timeout: float, player: Player) -> str | None:
+def _sintetizar_say(texto: str, voz: str, timeout: float, player: Player, epoca: int | None = None) -> str | None:
     caminho = _temporario(".aiff")
-    if player.run(["say", "-v", voz, "-r", "190", "-o", caminho, texto], timeout=timeout) != 0:
+    if player.run(["say", "-v", voz, "-r", "190", "-o", caminho, texto], timeout=timeout, epoca=epoca) != 0:
         _apagar(caminho)
         return None
     return caminho
@@ -371,6 +380,7 @@ def falar_texto(
     volume: float | None = None,
     timeout: float = TIMEOUT_MOTOR,
     player: Player | None = None,
+    epoca: int | None = None,
 ) -> bool:
     """Tenta cada motor da cadeia; o próximo só entra se o anterior falhar."""
     if not texto or not texto.strip():
@@ -379,8 +389,13 @@ def falar_texto(
     cadeia = list(motores) if motores is not None else cfg.motores
     volume = cfg.volume if volume is None else volume
     player = player or Player()
+    if epoca is None:
+        epoca = player.epoca  # stop() a partir daqui cancela síntese, fallback e playback
 
     for motor in cadeia:
+        if player.epoca != epoca:
+            log.info("voz: cancelada antes do motor %s", motor)
+            return False
         caminho: str | None = None
         try:
             if motor.startswith("say:"):
@@ -388,7 +403,7 @@ def falar_texto(
                 if not voz:
                     log.warning("voz: motor say sem voz: %s", motor)
                     continue
-                caminho = _sintetizar_say(texto, voz, timeout, player)
+                caminho = _sintetizar_say(texto, voz, timeout, player, epoca)
             elif motor.startswith("wyoming://"):
                 host, porta, voz = _parse_wyoming(motor)
                 caminho = _sintetizar_wyoming(texto, host, porta, voz, timeout)
@@ -402,8 +417,13 @@ def falar_texto(
         if caminho is None:
             continue
         try:
-            if player.play(caminho, volume):
+            if player.epoca != epoca:
+                log.info("voz: cancelada depois da síntese do motor %s; não toca", motor)
+                return False
+            if player.play(caminho, volume, epoca=epoca):
                 return True
+            if player.epoca != epoca:
+                return False  # parada no meio do áudio: não cai pro próximo motor
             log.warning("voz: falha ao tocar áudio do motor %s", motor)
         finally:
             _apagar(caminho)
@@ -476,7 +496,7 @@ class Falador:
         self.consultar = consultar or consultar_resposta
         self.player = Player()
         self._falar = falar or (
-            lambda texto, em=None: falar_texto(texto, motores=motores, volume=volume, player=self.player)
+            lambda texto, em=None: falar_texto(texto, motores=motores, volume=volume, player=self.player, epoca=self._epoca_fala)
         )
         self.estado = estado
         self.falados = _resolver(falados, FALADOS)
@@ -495,6 +515,7 @@ class Falador:
         self._speak_lock = threading.Lock()
         self._atual: str | None = None
         self._cancelar = 0
+        self._epoca_fala: int | None = None  # época do Player capturada junto com _cancelar
         self._ids = self._carregar()
 
     # -- persistência
@@ -615,6 +636,7 @@ class Falador:
                 self._marcar(item.id)
                 self._atual = item.id
                 cancelar = self._cancelar
+                self._epoca_fala = self.player.epoca
             self._falar_pronto(item, texto, em, cancelar)
 
     def _falar_pronto(self, item: _Pendente, texto: str, em: object, cancelar: int) -> None:
@@ -657,6 +679,7 @@ class Falador:
             return False
         self.player.stop()
         with self._speak_lock:
+            self._epoca_fala = self.player.epoca
             try:
                 return bool(self._falar(fala, em=None))
             except Exception:  # noqa: BLE001

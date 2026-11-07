@@ -127,15 +127,17 @@ def test_config_padrao_e_arquivo(tmp_path):
 
 
 class FakePlayer:
+    epoca = 0
+
     def __init__(self, tocar=True):
         self.plays = []
         self.tocar = tocar
 
-    def play(self, caminho, volume):
+    def play(self, caminho, volume, epoca=None):
         self.plays.append((str(caminho), volume))
         return self.tocar
 
-    def run(self, argv, *, timeout=None):
+    def run(self, argv, *, timeout=None, epoca=None):
         return 1
 
     def stop(self):
@@ -146,7 +148,7 @@ class RecordingPlayer:
     def __init__(self):
         self.calls = []
 
-    def run(self, argv, *, timeout=None):
+    def run(self, argv, *, timeout=None, epoca=None):
         self.calls.append((argv, timeout))
         if argv[0] == "say":
             Path(argv[argv.index("-o") + 1]).write_bytes(b"x")
@@ -167,7 +169,7 @@ def test_say_usa_a_voz_e_a_velocidade_pedidas(tmp_path):
 def test_player_toca_com_o_volume_pedido(monkeypatch):
     player = voz.Player()
     chamadas = []
-    monkeypatch.setattr(player, "run", lambda argv, timeout=None: chamadas.append(argv) or 0)
+    monkeypatch.setattr(player, "run", lambda argv, timeout=None, epoca=None: chamadas.append(argv) or 0)
     assert player.play("a.wav", 0.15)
     assert chamadas == [["afplay", "-v", "0.15", "a.wav"]]
 
@@ -185,7 +187,7 @@ def test_cadeia_pula_motor_que_falha_ou_estoura(monkeypatch, tmp_path):
         ordem.append(("wyoming", host, porta, nome))
         raise TimeoutError("demorou")
 
-    def say(texto, nome, timeout, player):
+    def say(texto, nome, timeout, player, epoca=None):
         ordem.append(("say", nome))
         return str(audio)
 
@@ -478,7 +480,7 @@ def test_falador_parar_mata_o_audio_e_nao_repete(tmp_path):
 def test_falador_usa_o_proprio_player_e_parar_mata(tmp_path, monkeypatch):
     chamadas = []
 
-    def fake_falar_texto(texto, *, motores=None, volume=None, player=None):
+    def fake_falar_texto(texto, *, motores=None, volume=None, player=None, epoca=None):
         chamadas.append((texto, player))
         player.run(["/bin/sleep", "10"])
         return False
@@ -798,3 +800,57 @@ def test_consultar_resposta_poe_reino_antes_do_subcomando(monkeypatch):
     monkeypatch.setenv("RONALDO_CORTE", "/x/corte")
     assert voz.consultar_resposta("a" * 32, "pessoal", path="/bin")["texto"] == "oi"
     assert visto["argv"] == ["/x/corte", "--reino", "pessoal", "resposta", "a" * 32, "--json"]
+
+
+def test_parar_durante_sintese_wyoming_nao_toca(monkeypatch, tmp_path):
+    """Achado do conselheiro: parar() durante a síntese (sem processo de áudio ainda) não pode deixar o áudio tocar."""
+    audio = tmp_path / "a.wav"
+    audio.write_bytes(b"x")
+    liberar = threading.Event()
+    sintetizando = threading.Event()
+
+    def sintese_bloqueada(*a, **k):
+        sintetizando.set()
+        liberar.wait(5)
+        return str(audio)
+
+    monkeypatch.setattr(voz, "_sintetizar_wyoming", sintese_bloqueada)
+    monkeypatch.setattr(voz, "_apagar", lambda c: None)
+    player = voz.Player()
+    tocados = []
+    monkeypatch.setattr(player, "run", lambda argv, timeout=None, epoca=None: tocados.append(argv) or 0)
+    resultado = {}
+    t = threading.Thread(target=lambda: resultado.setdefault("ok", voz.falar_texto(
+        "oi", motores=["wyoming://h:1#v", "say:Luciana"], volume=0.1, player=player)))
+    t.start()
+    assert sintetizando.wait(2)
+    player.stop()  # o que a wake word / desligar fazem
+    liberar.set()
+    t.join(3)
+    assert resultado["ok"] is False
+    assert tocados == []  # nem afplay, nem fallback say
+
+
+def test_falador_parar_entre_checagem_e_fala_nao_toca(tmp_path, monkeypatch):
+    """parar() logo depois do Falador escolher o item: a época capturada sob o lock cancela a fala."""
+    estado = tmp_path / "estado.json"
+    voz.ligar(estado)
+    tocou = []
+    f = voz.Falador(
+        consultar=lambda id, reino: {"estado": "pronta", "texto": "resposta", "em": 1.0},
+        estado=estado, falados=tmp_path / "falados.json", automatico=False,
+        ligado_fn=lambda: True, gravando_fn=lambda: False,
+    )
+    monkeypatch.setattr(f.player, "run", lambda argv, timeout=None, epoca=None: tocou.append(argv) or 0)
+    original = f._falar_pronto
+
+    def com_parar(item, texto, em, cancelar):
+        f.player.stop()  # parar() chega antes do falar_texto começar
+        return original(item, texto, em, cancelar)
+
+    monkeypatch.setattr(f, "_falar_pronto", com_parar)
+    monkeypatch.setattr(voz, "_sintetizar_say", lambda *a, **k: str(tmp_path / "x.aiff"))
+    f.enfileirar("pessoal", "a" * 32)
+    f.passo()
+    assert tocou == []
+    assert f.ja_falado("a" * 32)
