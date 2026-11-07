@@ -36,6 +36,11 @@ def test_essencial_troca_ronaldo_por_r_em_qualquer_caixa():
     assert voz.essencial("Ronaldo disse; RONALDO ouviu; ronaldo calou.") == "R. disse; R. ouviu; R. calou."
 
 
+def test_essencial_tira_url_solta_e_citacao_markdown():
+    assert voz.essencial("Antes https://example.com/a/b depois") == "Antes depois"
+    assert voz.essencial("> citação") == "citação"
+
+
 def test_essencial_tira_token_e_caminhos_longos():
     texto = "⟦c:abc123⟧ está em /Users/guima/Projects/Personal/ronaldo e em src/ronaldo/agent.py."
     saida = voz.essencial(texto)
