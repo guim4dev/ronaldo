@@ -287,6 +287,15 @@ def test_cliente_wyoming_sintetiza_com_servidor_falso():
         servidor.close()
 
 
+def _esperar(condicao, timeout=2.0):
+    limite = time.monotonic() + timeout
+    while time.monotonic() < limite:
+        if condicao():
+            return True
+        time.sleep(0.01)
+    return False
+
+
 def test_player_mata_o_processo_atual():
     player = voz.Player()
     inicio = time.monotonic()
@@ -297,7 +306,7 @@ def test_player_mata_o_processo_atual():
 
     thread = threading.Thread(target=tocar)
     thread.start()
-    time.sleep(0.2)
+    assert _esperar(lambda: player._proc is not None)
     player.stop()
     thread.join(3)
     assert not thread.is_alive()
@@ -445,6 +454,7 @@ def test_falador_parar_mata_o_audio_e_nao_repete(tmp_path):
     thread = threading.Thread(target=f.passo)
     thread.start()
     assert comecou.wait(2)
+    assert _esperar(lambda: f.player._proc is not None)
     inicio = time.monotonic()
     f.parar()
     thread.join(3)
@@ -483,7 +493,7 @@ def test_falador_usa_o_proprio_player_e_parar_mata(tmp_path, monkeypatch):
     while time.monotonic() < limite and not chamadas:
         time.sleep(0.02)
     assert chamadas and chamadas[0][1] is f.player
-    time.sleep(0.2)
+    assert _esperar(lambda: f.player._proc is not None)
     inicio = time.monotonic()
     f.parar()
     thread.join(3)
