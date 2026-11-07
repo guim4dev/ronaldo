@@ -110,7 +110,7 @@ def _falar_ao_rei(template: list[str], text: str, *, path: str, timeout: float, 
             voz_module.enfileirar(reino, oid)
             reply = f"Enviado ao rei ({reino})."
         else:
-            erro = dados.get("error")
+            erro = dados.get("erro") or dados.get("error")
             if isinstance(erro, dict):
                 erro = erro.get("message")
             detalhe = erro or r.stderr.strip() or r.stdout.strip() or f"código {r.returncode}"
