@@ -166,3 +166,26 @@ def test_qualquer_posicao_so_em_atalho_de_comando_e_booleano(tmp_path):
     for corpo in ['palavras=["gol"]\nterminal="t"\nqualquer_posicao=true\n', 'palavras=["gol"]\ncomando=["a"]\nqualquer_posicao="sim"\n']:
         with pytest.raises(ValueError):
             write(tmp_path, base + corpo)
+
+
+@pytest.mark.parametrize("texto, vai", [
+    ("Aldo.", False), ("Aldo co.", True), ("Do gol porra.", True), ("naldo", False), ("Ronaldo!", False),
+    ("do", False), ("o.", False), ("Ronaldo, Ronaldo.", False), ("...", False), ("Ronaldo, toca", True),
+])
+def test_resto_do_nome_nao_vai_pro_rei(monkeypatch, texto, vai):
+    sent = []
+    monkeypatch.setattr(agent, "dispatch", lambda template, text, **kw: sent.append(text))
+    route = Route(model="ronaldo_ptbr.onnx", action="command", command=["corte", "falar", "{text}"], hud=False)
+    lst = _listener_with(monkeypatch, route, texto)
+    lst._dictate(route)
+    assert sent == ([texto] if vai else [])
+
+
+@pytest.mark.parametrize("texto", ["Aldo.", "naldo", "Ronaldo ronaldo", "", "  .  "])
+def test_so_resto_do_nome(texto):
+    assert agent.so_resto_do_nome(texto)
+
+
+@pytest.mark.parametrize("texto", ["Aldo co.", "Do gol porra.", "o gol", "Ronaldo, modo voz"])
+def test_nao_e_so_resto_do_nome(texto):
+    assert not agent.so_resto_do_nome(texto)

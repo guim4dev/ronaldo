@@ -204,6 +204,10 @@ class Listener:
                 log.info("sem fala; nada feito")
                 if use_hud: agent_hud.show("⚠️ Não entendi", "Não detectei fala.", "warn", 5, req_id)
                 return
+            if route.action == "command" and agent.so_resto_do_nome(text):
+                log.info("só o resto do nome (%r); nada enviado", text)
+                if use_hud: agent_hud.show("🤫 Só o nome", "Nada enviado.", "info", 3, req_id)
+                return
             if route.action == "command":
                 if use_hud:
                     agent_hud.show("🎙️ Ronaldo ouviu", agent.summarize(text) + " — enviando…", "info", 6, req_id)

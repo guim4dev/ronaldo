@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import subprocess
 import threading
 import uuid
@@ -23,6 +24,17 @@ def login_path() -> str:
     except (OSError, subprocess.TimeoutExpired):
         out = ""
     return out.strip() or os.environ.get("PATH", "/usr/bin:/bin")
+
+
+# Restos do próprio nome que a gravação pega quando o Guima só chama "Ronaldo" (ex.: pra cortar a fala) e fica quieto.
+RESTOS_DO_NOME = {"ronaldo", "naldo", "aldo", "do", "o"}
+
+
+def so_resto_do_nome(text: str) -> bool:
+    """Transcrição vazia ou feita só de restos do nome ("Aldo.", "Ronaldo, Ronaldo."): não é pedido pra ninguém."""
+    import unicodedata
+    t = "".join(c for c in unicodedata.normalize("NFD", text.casefold()) if unicodedata.category(c) != "Mn")
+    return all(w in RESTOS_DO_NOME for w in re.findall(r"\w+", t))
 
 
 def build_argv(template: list[str], text: str) -> tuple[list[str], str | None]:
