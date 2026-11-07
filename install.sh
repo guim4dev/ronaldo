@@ -53,6 +53,12 @@ echo "→ Hex abre no login"
 
 echo "→ (re)iniciando"
 launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
+# bootout returns before the old instance has exited, and until it has, bootstrap
+# fails with "Bootstrap failed: 5: Input/output error". Wait up to 10 s for it.
+for _ in $(seq 50); do
+  launchctl print "gui/$(id -u)/$LABEL" >/dev/null 2>&1 || break
+  sleep 0.2
+done
 launchctl bootstrap "gui/$(id -u)" "$PLIST"
 
 cat <<MSG
