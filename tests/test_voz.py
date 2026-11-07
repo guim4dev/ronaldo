@@ -9,6 +9,7 @@ import subprocess
 import threading
 import time
 import wave
+from pathlib import Path
 
 import pytest
 from wyoming.audio import AudioChunk, AudioStart, AudioStop
@@ -139,6 +140,40 @@ class FakePlayer:
 
     def stop(self):
         pass
+
+
+class RecordingPlayer:
+    def __init__(self):
+        self.calls = []
+
+    def run(self, argv, *, timeout=None):
+        self.calls.append((argv, timeout))
+        if argv[0] == "say":
+            Path(argv[argv.index("-o") + 1]).write_bytes(b"x")
+        return 0
+
+
+def test_say_usa_a_voz_e_a_velocidade_pedidas(tmp_path):
+    player = RecordingPlayer()
+    caminho = voz._sintetizar_say("oi", "Luciana", 4.0, player)
+    argv, timeout = player.calls[0]
+    assert argv[:6] == ["say", "-v", "Luciana", "-r", "190", "-o"]
+    assert argv[-1] == "oi"
+    assert timeout == 4.0
+    assert Path(caminho).exists()
+    os.unlink(caminho)
+
+
+def test_player_toca_com_o_volume_pedido(monkeypatch):
+    player = voz.Player()
+    chamadas = []
+    monkeypatch.setattr(player, "run", lambda argv, timeout=None: chamadas.append(argv) or 0)
+    assert player.play("a.wav", 0.15)
+    assert chamadas == [["afplay", "-v", "0.15", "a.wav"]]
+
+
+def test_parse_wyoming_aceita_voz_com_dois_pontos():
+    assert voz._parse_wyoming("wyoming://omarchy:10201#kokoro:pm_alex") == ("omarchy", 10201, "kokoro:pm_alex")
 
 
 def test_cadeia_pula_motor_que_falha_ou_estoura(monkeypatch, tmp_path):
