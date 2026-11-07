@@ -27,7 +27,10 @@ dev = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
-filterwarnings = ["ignore::UserWarning"]
+filterwarnings = [
+    "ignore::UserWarning",
+    "ignore::DeprecationWarning:wyoming.audio",
+]
 
 [tool.uv]
 package = true
