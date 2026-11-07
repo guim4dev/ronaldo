@@ -157,3 +157,12 @@ def test_atalho_de_comando_valida(tmp_path):
                   'palavras=["gol"]\ncomando=["a"]\nterminal="t"\n', 'palavras=["gol"]\ncomando=["a"]\nmax_palavras=0\n']:
         with pytest.raises(ValueError):
             write(tmp_path, '[[routes]]\nmodel="x"\naction="command"\ncommand=["x"]\n[[routes.atalhos]]\n' + corpo)
+
+
+def test_qualquer_posicao_so_em_atalho_de_comando_e_booleano(tmp_path):
+    base = '[[routes]]\nmodel="x"\naction="command"\ncommand=["x"]\n[[routes.atalhos]]\n'
+    cfg = write(tmp_path, base + 'palavras=["gol"]\ncomando=["a"]\nqualquer_posicao=true\n')
+    assert cfg.routes[0].atalhos[0]["qualquer_posicao"] is True
+    for corpo in ['palavras=["gol"]\nterminal="t"\nqualquer_posicao=true\n', 'palavras=["gol"]\ncomando=["a"]\nqualquer_posicao="sim"\n']:
+        with pytest.raises(ValueError):
+            write(tmp_path, base + corpo)

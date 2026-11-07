@@ -72,6 +72,8 @@ class Route:
                     raise ValueError("max_palavras precisa ser um inteiro >= 1")
             elif not item.get("terminal"):
                 raise ValueError("atalho precisa de terminal ou comando")
+            if "qualquer_posicao" in item and (not isinstance(item["qualquer_posicao"], bool) or "comando" not in item):
+                raise ValueError("qualquer_posicao é booleano e só vale em atalho com comando")
 
     def model_path(self) -> Path:
         p = Path(self.model).expanduser()

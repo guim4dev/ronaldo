@@ -148,3 +148,6 @@ palavras = ["gol gol gol", "golaço", "gol"]
 comando = ["/usr/bin/afplay", "-v", "0.6", "~/Music/Reino/gol-rematch.wav"]
 nome = "gol"
 ```
+
+Com `qualquer_posicao = true`, o atalho de comando dispara com qualquer fala curta que **contenha** uma das
+palavras, em qualquer posição, inclusive esticada ("do gol porra", "que golaço", "goool!").

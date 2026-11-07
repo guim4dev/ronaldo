@@ -19,6 +19,11 @@ def _normalizar(value: str) -> str:
     return "".join(c for c in unicodedata.normalize("NFD", value.casefold()) if unicodedata.category(c) != "Mn")
 
 
+def _esticada(palavra: str) -> re.Pattern:
+    """Palavra que casa também esticada: 'gol' casa 'goool', 'golaço' casa 'golaaaço' (cada letra pode repetir)."""
+    return re.compile("".join(re.escape(c) + "+" for c in _normalizar(palavra)))
+
+
 def casar(texto: str, atalhos):
     for atalho in atalhos:
         i = 0
@@ -32,6 +37,10 @@ def casar(texto: str, atalhos):
             limite = atalho.get("max_palavras", MAX_PALAVRAS_COMANDO)
             if len(re.findall(r"\w+", texto[i:])) > limite:
                 continue
+        if atalho.get("qualquer_posicao"):
+            if any(_esticada(p).fullmatch(w) for w in re.findall(r"\w+", _normalizar(texto[i:])) for p in atalho["palavras"]):
+                return atalho, ""
+            continue
         for palavra in atalho["palavras"]:
             end = i + len(palavra)
             if _normalizar(texto[i:end]) == _normalizar(palavra) and (end == len(texto) or texto[end].isspace() or texto[end] in BOUNDARY):

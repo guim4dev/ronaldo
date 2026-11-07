@@ -254,3 +254,24 @@ def test_agent_atalho_de_comando_nao_chama_o_rei_nem_o_modo_voz(monkeypatch):
     ok, msg = agent.run(["corte", "falar", "{text}"], "Ronaldo, gol!", path="/mock", timeout=1, notify_reply=False, name="rota", hud=True, req_id=7, atalhos=[GOL], voz=True)
     assert ok and rodou == [GOL["comando"]]
     assert shown[-1][2] == "ok"
+
+
+# ---------------------------------------------------------------- gol em qualquer posição (fala real "Do gol porra.")
+
+GOL_QQ = {**GOL, "qualquer_posicao": True}
+
+
+@pytest.mark.parametrize("texto", ["Do gol porra.", "gol porra", "do gol porra", "que golaço", "gol caralho", "Goool!",
+                                   "GOOOOL porra", "Ronaldo, gol, porra!", "que golaaaaço", "gol"])
+def test_gol_em_qualquer_posicao_frases_reais(texto):
+    assert casar(texto, [GOL_QQ])[0] is GOL_QQ
+
+
+@pytest.mark.parametrize("texto", ["o gol do time adversário no último minuto", "golpe de mestre", "goleiro defendeu",
+                                   "Ronaldo, que horas são", "gola da camisa"])
+def test_gol_em_qualquer_posicao_nao_pega(texto):
+    assert casar(texto, [GOL_QQ]) is None
+
+
+def test_sem_qualquer_posicao_continua_so_no_comeco():
+    assert casar("do gol porra", [GOL]) is None
