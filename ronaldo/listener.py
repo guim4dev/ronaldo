@@ -59,8 +59,19 @@ class Route:
         if self.voz and self.action != "command":
             raise ValueError("voz só é válida em rotas command")
         for item in self.atalhos:
-            if not item.get("terminal") or not item.get("palavras"):
-                raise ValueError("atalho precisa de terminal e palavras")
+            if not item.get("palavras"):
+                raise ValueError("atalho precisa de palavras")
+            if "comando" in item:
+                cmd = item["comando"]
+                if "terminal" in item:
+                    raise ValueError("atalho tem terminal ou comando, não os dois")
+                if not (isinstance(cmd, list) and cmd and all(isinstance(c, str) and c for c in cmd)):
+                    raise ValueError("comando do atalho precisa ser uma lista de strings")
+                mp = item.get("max_palavras", 1)
+                if isinstance(mp, bool) or not isinstance(mp, int) or mp < 1:
+                    raise ValueError("max_palavras precisa ser um inteiro >= 1")
+            elif not item.get("terminal"):
+                raise ValueError("atalho precisa de terminal ou comando")
 
     def model_path(self) -> Path:
         p = Path(self.model).expanduser()

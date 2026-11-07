@@ -1,4 +1,4 @@
-"""Configured voice shortcuts that deliver a command to a named Hex terminal."""
+"""Configured voice shortcuts: deliver a command to a named Hex terminal, or run a local command (e.g. play a sound)."""
 from __future__ import annotations
 
 import json
@@ -12,6 +12,7 @@ import unicodedata
 
 _lock = threading.Lock()
 BOUNDARY = " ,.;:!?—-"
+MAX_PALAVRAS_COMANDO = 5  # atalho com comando só vale em fala curta
 
 
 def _normalizar(value: str) -> str:
@@ -27,11 +28,26 @@ def casar(texto: str, atalhos):
             i += 7
             while i < len(texto) and (texto[i].isspace() or unicodedata.category(texto[i]).startswith("P")):
                 i += 1
+        if "comando" in atalho:
+            limite = atalho.get("max_palavras", MAX_PALAVRAS_COMANDO)
+            if len(re.findall(r"\w+", texto[i:])) > limite:
+                continue
         for palavra in atalho["palavras"]:
             end = i + len(palavra)
             if _normalizar(texto[i:end]) == _normalizar(palavra) and (end == len(texto) or texto[end].isspace() or texto[end] in BOUNDARY):
                 return atalho, re.sub(r"^[\s,.;:!?—]+", "", texto[end:])
     return None
+
+
+def executar_comando(argv, path="/usr/bin:/bin", nome="atalho"):
+    """Roda o comando do atalho sem esperar (ex.: afplay de um arquivo); ~ é expandido em cada argumento."""
+    argv = [os.path.expanduser(a) for a in argv]
+    try:
+        subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                         start_new_session=True, env={**os.environ, "PATH": path}, cwd=os.path.expanduser("~"))
+    except (OSError, ValueError) as exc:
+        return "falhou", f"{nome}: {exc}"
+    return "entregue", f"Tocou {nome}." if os.path.basename(argv[0]) == "afplay" else f"Rodou {nome}."
 
 
 def _call(path, args):

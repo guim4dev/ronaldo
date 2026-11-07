@@ -148,3 +148,12 @@ nome="batuqueiro"
     assert cfg.routes[0].atalhos == [{"palavras": ["batuqueiro"], "terminal": "batuqueiro", "nome": "batuqueiro"}]
     with pytest.raises(ValueError, match="repetida"):
         write(tmp_path, '[[routes]]\nmodel="x"\naction="command"\ncommand=["x"]\n[[routes.atalhos]]\npalavras=["oi"]\nterminal="t"\n[[routes.atalhos]]\npalavras=["oi"]\nterminal="t"\n')
+
+
+def test_atalho_de_comando_valida(tmp_path):
+    cfg = write(tmp_path, '[[routes]]\nmodel="x"\naction="command"\ncommand=["x"]\n[[routes.atalhos]]\npalavras=["gol"]\ncomando=["/usr/bin/afplay","a.wav"]\n')
+    assert cfg.routes[0].atalhos[0]["comando"] == ["/usr/bin/afplay", "a.wav"]
+    for corpo in ['palavras=["gol"]\n', 'palavras=["gol"]\ncomando=[]\n', 'palavras=["gol"]\ncomando="afplay"\n',
+                  'palavras=["gol"]\ncomando=["a"]\nterminal="t"\n', 'palavras=["gol"]\ncomando=["a"]\nmax_palavras=0\n']:
+        with pytest.raises(ValueError):
+            write(tmp_path, '[[routes]]\nmodel="x"\naction="command"\ncommand=["x"]\n[[routes.atalhos]]\n' + corpo)

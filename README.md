@@ -137,3 +137,14 @@ palavras = ["batuqueiro"]
 terminal = "batuqueiro"
 nome = "batuqueiro"
 ```
+
+Ou rodar um comando local, sem passar pelo agente nem pelo modo voz (ex.: tocar um som). Atalho com
+`comando` só vale em fala curta: até `max_palavras` palavras depois do "Ronaldo" (padrão 5). `~` é expandido
+e o comando roda sem esperar; trocar o arquivo no caminho troca o som, sem reiniciar.
+
+```toml
+[[routes.atalhos]]
+palavras = ["gol gol gol", "golaço", "gol"]
+comando = ["/usr/bin/afplay", "-v", "0.6", "~/Music/Reino/gol-rematch.wav"]
+nome = "gol"
+```

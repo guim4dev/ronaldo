@@ -198,3 +198,59 @@ def test_agent_shortcut_unexpected_exception_shows_error_hud_and_returns(monkeyp
     result_value = agent.run(["corte"], "batuqueiro, toca", path="/mock", timeout=1, notify_reply=False, name="rota", hud=True, req_id=102, atalhos=[shortcut])
     assert result_value == (False, "inesperado")
     assert shown[-1][0].startswith("❌") and shown[-1][2] == "err"
+
+
+# ---------------------------------------------------------------- atalho com comando (gol do Rematch)
+
+GOL = {"palavras": ["gol gol gol", "golaço", "gol"], "comando": ["/usr/bin/afplay", "-v", "0.6", "~/Music/Reino/gol-rematch.wav"], "nome": "gol"}
+
+
+@pytest.mark.parametrize("texto", ["Ronaldo, gol!", "gol", "Golaço!", "Ronaldo, gol gol gol.", "GOL GOL GOL", "gol, que lindo"])
+def test_atalho_de_comando_casa_fala_curta(texto):
+    assert casar(texto, [GOL])[0] is GOL
+
+
+@pytest.mark.parametrize("texto", ["gol do time adversário no último minuto de jogo", "golpe de mestre", "o gol", "Ronaldo, gol do Fulano no Rematch hoje cedo"])
+def test_atalho_de_comando_nao_pega_frase_comum(texto):
+    assert casar(texto, [GOL]) is None
+
+
+def test_max_palavras_configuravel_e_terminal_sem_limite():
+    assert casar("gol a b c d e f", [{**GOL, "max_palavras": 10}]) is not None
+    bat = {"palavras": ["batuqueiro"], "terminal": "t"}
+    assert casar("batuqueiro toca a música mais longa que existir agora", [bat]) is not None
+
+
+def test_executar_comando_expande_til_e_nao_espera(monkeypatch, tmp_path):
+    from ronaldo import atalhos
+    monkeypatch.setenv("HOME", str(tmp_path))
+    vistos = []
+    monkeypatch.setattr(atalhos.subprocess, "Popen", lambda argv, **kw: vistos.append((argv, kw)) or SimpleNamespace(pid=1))
+    status, msg = atalhos.executar_comando(GOL["comando"], path="/usr/bin:/bin", nome="gol")
+    assert status == "entregue" and "gol" in msg
+    argv, kw = vistos[0]
+    assert argv == ["/usr/bin/afplay", "-v", "0.6", f"{tmp_path}/Music/Reino/gol-rematch.wav"]
+    assert kw.get("start_new_session") is True and kw["stdin"] == subprocess.DEVNULL
+
+
+def test_executar_comando_falha_vira_falhou(monkeypatch):
+    from ronaldo import atalhos
+    def boom(*a, **k): raise FileNotFoundError("afplay")
+    monkeypatch.setattr(atalhos.subprocess, "Popen", boom)
+    status, msg = atalhos.executar_comando(["/nao/existe"], path="/bin", nome="gol")
+    assert status == "falhou" and "afplay" in msg
+
+
+def test_agent_atalho_de_comando_nao_chama_o_rei_nem_o_modo_voz(monkeypatch):
+    from ronaldo import voz
+    monkeypatch.setattr(voz, "ligado", lambda *a, **k: True)
+    monkeypatch.setattr(agent, "_falar_ao_rei", lambda *a, **k: pytest.fail("modo voz chamado"))
+    monkeypatch.setattr(agent.subprocess, "run", lambda *a, **k: pytest.fail("corte chamado"))
+    monkeypatch.setattr("ronaldo.atalhos.entregar_terminal", lambda *a, **k: pytest.fail("hc chamado"))
+    rodou = []
+    monkeypatch.setattr("ronaldo.atalhos.executar_comando", lambda argv, **k: rodou.append(argv) or ("entregue", "Tocou gol."))
+    shown = []
+    monkeypatch.setattr("ronaldo.hud.show", lambda *a: shown.append(a))
+    ok, msg = agent.run(["corte", "falar", "{text}"], "Ronaldo, gol!", path="/mock", timeout=1, notify_reply=False, name="rota", hud=True, req_id=7, atalhos=[GOL], voz=True)
+    assert ok and rodou == [GOL["comando"]]
+    assert shown[-1][2] == "ok"

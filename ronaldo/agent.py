@@ -138,24 +138,29 @@ def run(template: list[str], text: str, *, path: str, timeout: float, notify_rep
             return modo
         falar_resposta = voz_module.ligado()
     if atalhos:
-        from .atalhos import casar, entregar_terminal
-        match = casar(text, atalhos)
+        from . import atalhos as atalhos_module
+        match = atalhos_module.casar(text, atalhos)
         if match:
             shortcut, remainder = match
-            shortcut_name = shortcut.get("nome") or shortcut["terminal"]
+            comando = shortcut.get("comando")
+            destino = comando[0] if comando else shortcut["terminal"]
+            shortcut_name = shortcut.get("nome") or destino
             try:
-                status, message = entregar_terminal(shortcut["terminal"], remainder, path=path, timeout=10, nome=shortcut_name)
+                if comando:
+                    status, message = atalhos_module.executar_comando(comando, path=path, nome=shortcut_name)
+                else:
+                    status, message = atalhos_module.entregar_terminal(shortcut["terminal"], remainder, path=path, timeout=10, nome=shortcut_name)
             except Exception as exc:
                 status, message = "falhou", str(exc) or type(exc).__name__
                 log.exception("[%s] exceção ao entregar atalho %s", name, shortcut_name)
             ok = status != "falhou"
-            log.info("[%s] atalho %s → %s: %s %s", name, shortcut_name, shortcut["terminal"], status, message)
+            log.info("[%s] atalho %s → %s: %s %s", name, shortcut_name, destino, status, message)
             if hud:
                 from . import hud as hud_module
                 kind = {"entregue": "ok", "sem_confirmacao": "warn", "falhou": "err"}[status]
                 prefix = {"entregue": "✅ ", "sem_confirmacao": "⚠️ ", "falhou": "❌ "}[status]
-                title = message if status != "falhou" else f"Não entregou ao {shortcut_name}"
-                hud_module.show(prefix + title, summarize(remainder if ok else message), kind, 6 if ok else 12, req_id)
+                title = message if status != "falhou" else (f"Não rodou {shortcut_name}" if comando else f"Não entregou ao {shortcut_name}")
+                hud_module.show(prefix + title, summarize((remainder or text) if ok else message), kind, 6 if ok else 12, req_id)
             return ok, message
     if falar_resposta:
         return _falar_ao_rei(template, text, path=path, timeout=timeout, notify_reply=notify_reply, name=name, hud=hud, req_id=req_id)
