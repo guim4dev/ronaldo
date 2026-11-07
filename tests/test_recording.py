@@ -1,6 +1,7 @@
 """End-of-dictation logic, driven by real Silero VAD on macOS TTS audio."""
 
 import subprocess
+import sys
 from pathlib import Path
 import wave
 
@@ -9,6 +10,8 @@ import pytest
 
 from ronaldo.detector import CHUNK, SAMPLE_RATE, VoiceActivity
 from ronaldo.listener import MODELS, Config, Listener
+
+pytestmark = pytest.mark.skipif(sys.platform != "darwin", reason="needs macOS say/afconvert")
 
 
 def tts(tmp_path, text: str, voice: str = "Luciana") -> np.ndarray:

@@ -2,16 +2,20 @@
 
 import os
 import subprocess
+import sys
 import wave
 
 import numpy as np
 import openwakeword
+import pytest
 from openwakeword.model import Model
 
 from pathlib import Path
 
 from ronaldo.detector import CHUNK, WakeWord
 from ronaldo.listener import MODELS
+
+pytestmark = pytest.mark.skipif(sys.platform != "darwin", reason="needs macOS say/afconvert")
 
 JARVIS = Path(openwakeword.__file__).parent / "resources" / "models" / "hey_jarvis_v0.1.onnx"
 
