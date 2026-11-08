@@ -35,6 +35,63 @@ def test_chunk_nivel_tem_o_rms_pedido() -> None:
         assert abs(20 * math.log10(rms) - db) < 0.01, db
 
 
+def _validar_pessoal(saida: Path | None, dados: Path | None = None) -> subprocess.CompletedProcess[str]:
+    comando = [sys.executable, str(GOL / "train.py"), "--pessoal"]
+    if saida is not None:
+        comando += ["--saida", str(saida)]
+    if dados is not None:
+        comando += ["--pessoal-dados", str(dados)]
+    return subprocess.run(comando, capture_output=True, text=True, timeout=30)
+
+
+def test_pessoal_exige_saida() -> None:
+    r = _validar_pessoal(None)
+    assert r.returncode != 0
+    assert "--pessoal exige --saida explícito" in r.stderr
+
+
+def test_pessoal_recusa_saida_dentro_do_repo(tmp_path: Path) -> None:
+    r = _validar_pessoal(REPO / "training" / "gol" / "nao-criar.onnx")
+    assert r.returncode != 0
+    assert "fora de qualquer worktree Git" in r.stderr
+    assert not (REPO / "training" / "gol" / "nao-criar.onnx").exists()
+
+
+def test_pessoal_recusa_symlink_externo_para_dentro_do_repo(tmp_path: Path) -> None:
+    link = tmp_path / "saida.onnx"
+    link.symlink_to(REPO / "README.md")
+    r = _validar_pessoal(link)
+    assert r.returncode != 0
+    assert "fora de qualquer worktree Git" in r.stderr
+
+
+def test_pessoal_recusa_models_mesmo_fora_do_repo(tmp_path: Path) -> None:
+    r = _validar_pessoal(tmp_path / "models" / "gol_grito.onnx")
+    assert r.returncode != 0
+    assert "fora de qualquer pasta models/" in r.stderr
+
+
+def test_pessoal_aceita_saida_e_dados_fora_de_git(tmp_path: Path) -> None:
+    import train as T
+
+    fora = tmp_path / "privado"
+    T.validar_caminhos_pessoais(fora / "modelo.onnx", fora / "audio")
+
+
+def test_pessoal_recusa_dados_dentro_do_repo(tmp_path: Path) -> None:
+    r = _validar_pessoal(tmp_path / "modelo.onnx", REPO / "training" / "gol" / "audio")
+    assert r.returncode != 0
+    assert "--pessoal-dados deve ficar fora de qualquer worktree Git" in r.stderr
+
+
+def test_repo_nao_rastreia_arquivos_de_audio() -> None:
+    r = subprocess.run(["git", "-C", str(REPO), "ls-files"], check=True,
+                       capture_output=True, text=True)
+    extensoes = {".wav", ".mp3", ".flac", ".ogg", ".m4a", ".opus", ".aac"}
+    audios = [p for p in r.stdout.splitlines() if Path(p).suffix.lower() in extensoes]
+    assert not audios, f"arquivos de áudio rastreados: {audios}"
+
+
 def test_limite_poisson_zero_alarmes() -> None:
     # 0 alarmes em 16 h -> ~3/T = 0,1875/h (o limite que o relatorio cita)
     assert abs(M.limite_poisson(0, 16.0) - 3.0 / 16.0) < 1e-9

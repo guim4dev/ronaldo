@@ -26,6 +26,8 @@ import argparse
 import json
 import logging
 import math
+import os
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -475,13 +477,49 @@ def verificar_modelo(caminho: Path) -> dict:
     }
 
 
+def _caminho_fora_de_git(caminho: str | Path, nome: str) -> Path:
+    """Valida caminhos pessoais sem permitir escrita dentro de qualquer worktree."""
+    real = Path(os.path.realpath(Path(caminho).expanduser()))
+    if any(parte == "models" for parte in real.parts):
+        raise SystemExit(f"{nome} deve ficar fora de qualquer pasta models/: {real}")
+
+    ancestral = real
+    if ancestral.is_file():
+        ancestral = ancestral.parent
+    while not ancestral.exists() and ancestral != ancestral.parent:
+        ancestral = ancestral.parent
+    try:
+        raiz = subprocess.run(
+            ["git", "-C", str(ancestral), "rev-parse", "--show-toplevel"],
+            check=True, capture_output=True, text=True,
+        ).stdout.strip()
+    except subprocess.CalledProcessError:
+        return real
+    raiz_real = Path(os.path.realpath(raiz))
+    try:
+        real.relative_to(raiz_real)
+    except ValueError:
+        return real
+    raise SystemExit(f"{nome} deve ficar fora de qualquer worktree Git: {real}")
+
+
+def validar_caminhos_pessoais(saida: str | Path | None, dados: str | Path | None) -> None:
+    if saida is None:
+        raise SystemExit("--pessoal exige --saida explícito")
+    _caminho_fora_de_git(saida, "--saida")
+    if dados is not None:
+        _caminho_fora_de_git(dados, "--pessoal-dados")
+
+
 # --------------------------------------------------------------------------- #
 # main
 # --------------------------------------------------------------------------- #
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--dados", default=str(Path.home() / "data" / "gol"))
-    ap.add_argument("--saida", default=str(REPO / "models" / "gol_grito.onnx"))
+    ap.add_argument("--saida")
+    ap.add_argument("--pessoal", action="store_true", help="exige saída e dados pessoais fora de worktrees Git")
+    ap.add_argument("--pessoal-dados", help="pasta de áudio pessoal; deve ficar fora de worktrees Git e models/")
     ap.add_argument("--variacao", default="a")
     ap.add_argument("--epocas", type=int, default=24)
     ap.add_argument("--passos-por-epoca", type=int, default=0, help="0 = len(pos_treino)//lote_pos")
@@ -513,6 +551,11 @@ def main() -> None:
     ap.add_argument("--threads", type=int, default=4)
     ap.add_argument("--smoke", action="store_true", help="nao exige MANIFESTO.json")
     args = ap.parse_args()
+
+    if args.pessoal:
+        validar_caminhos_pessoais(args.saida, args.pessoal_dados)
+    elif args.saida is None:
+        args.saida = str(REPO / "models" / "gol_grito.onnx")
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     dados = Path(args.dados).expanduser()
