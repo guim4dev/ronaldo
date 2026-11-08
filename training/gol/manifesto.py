@@ -103,6 +103,37 @@ def main() -> None:
         exigir(horas[nome_horas]["treino"] >= 8.0,
                f"{nome_horas}: treino {horas[nome_horas]['treino']:.2f} h (< 8 h)")
 
+    # ---- conversa de futebol: SO avaliacao (nao entra no treino)
+    horas["conversa_futebol"] = {}
+    meta_p = C.FEATURES / "stream_conversa_futebol_avaliacao_meta.json"
+    exigir(meta_p.exists(), f"{meta_p} (rode features.py --conversa-futebol)")
+    meta = json.loads(meta_p.read_text(encoding="utf-8"))
+    feat = C.ROOT / meta["arquivo_features"]
+    rms = C.ROOT / meta["arquivo_rms"]
+    exigir(feat.exists() and rms.exists(), f"{feat} / {rms}")
+    d = info_npy(feat)
+    d_rms = info_npy(rms)
+    exigir(d["shape"] == [meta["chunks"], 96], f"{feat.name}: shape {d['shape']} != meta")
+    exigir(d_rms["shape"] == [meta["chunks"]], f"{rms.name}: shape {d_rms['shape']}")
+    exigir(meta.get("so_avaliacao") is True, "conversa_futebol tem que ser so avaliacao")
+    d.update({"categoria": "conversa_futebol", "split": "avaliacao",
+              "descricao": "streaming 80 ms de conversa espontanea pt-BR sobre futebol "
+                           "(mesa redonda/podcast), so avaliacao",
+              "chunks": meta["chunks"], "fontes": meta["fontes"], "horas": meta["horas"],
+              "rms_dbfs": d_rms["caminho"],
+              "arquivos_de_audio": meta["arquivos"]})
+    arquivos.append(d)
+    arquivos.append({**d_rms, "categoria": "conversa_futebol", "split": "avaliacao",
+                     "descricao": "RMS dBFS por chunk de conversa de futebol (avaliacao)"})
+    horas["conversa_futebol"]["avaliacao"] = meta["horas"]
+    contagens["chunks_conversa_futebol_avaliacao"] = meta["chunks"]
+    if meta["horas"] < 8.0:
+        log(f"AVISO conversa_futebol: {meta['horas']:.2f} h (alvo 8 h; minimo aceito 4 h)")
+    exigir(meta["horas"] >= 4.0,
+           f"conversa_futebol: avaliacao {meta['horas']:.2f} h (< 4 h)")
+    for proibido in C.FEATURES.glob("stream_conversa_futebol_treino*"):
+        raise SystemExit(f"conversa_futebol nao pode ter treino: {proibido}")
+
     # ---- externos (nao convertidos aqui)
     externos = []
     acav = C.RAW / "openwakeword" / "openwakeword_features_ACAV100M_2000_hrs_16bit.npy"
@@ -150,6 +181,8 @@ def main() -> None:
     # fontes de audio longo
     def contar(categoria: str) -> int:
         pasta = C.RAW / categoria / "wav"
+        if not pasta.exists():
+            pasta = C.RAW / categoria
         return len(list(pasta.glob("*.wav"))) if pasta.exists() else 0
 
     manifesto = {
@@ -198,6 +231,7 @@ def main() -> None:
         "externos": externos,
         "fontes_audio_bruto": {
             "conversa_ptbr": contar("speech_ptbr"),
+        "conversa_futebol": contar("conversa_futebol"),
             "jogo": contar("game"),
             "musica": contar("music"),
             "ruido": contar("noise"),
@@ -224,7 +258,7 @@ def main() -> None:
     linhas += ["", "## Horas por categoria (streaming 80 ms)", "",
                "| categoria | treino (h) | avaliacao (h) |", "|---|---|---|"]
     for k, v in horas.items():
-        linhas.append(f"| {k} | {v['treino']:.2f} | {v['avaliacao']:.2f} |")
+        linhas.append(f"| {k} | {v.get('treino', 0.0):.2f} | {v['avaliacao']:.2f} |")
     linhas += ["", "## Arquivos de features", "", "| arquivo | categoria | split | shape | dtype | horas |",
                "|---|---|---|---|---|---|"]
     for a in arquivos:
