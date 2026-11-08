@@ -274,16 +274,21 @@ def avaliar_features_curtas(sessao, caminho: Path, limiares: list[float], Portao
     feats = np.load(caminho, mmap_mode="r")
     if feats.ndim == 3:
         n, t = feats.shape[0], feats.shape[1]
-        notas = M.scores_janelas(sessao, np.asarray(feats).reshape(-1, feats.shape[-1]))
-        notas = notas.reshape(n, t).max(axis=1)
+        if t == M.JANELA:
+            notas = M.scores_janelas(sessao, np.asarray(feats))
+        else:
+            janelas = np.lib.stride_tricks.sliding_window_view(feats, M.JANELA, axis=1)
+            janelas = janelas.transpose(0, 1, 3, 2).reshape(-1, M.JANELA, M.DIM)
+            notas = M.scores_janelas(sessao, janelas).reshape(n, -1).max(axis=1)
     else:
         notas = M.scores_janelas(sessao, feats)
     saida = {"clipes": int(len(notas)), "segundos": 0.0, "por_limiar": {}}
     for limiar in limiares:
         sem = notas >= limiar
+        ic95 = intervalo_wilson(int(sem.sum()), len(sem))
         saida["por_limiar"][limiar] = {
-            "sem": {"acertos": int(sem.sum()), "taxa": float(sem.mean())},
-            "com": {"acertos": int(sem.sum()), "taxa": float(sem.mean())},
+            "sem": {"acertos": int(sem.sum()), "taxa": float(sem.mean()), "ic95_wilson": ic95},
+            "com": {"acertos": int(sem.sum()), "taxa": float(sem.mean()), "ic95_wilson": ic95},
             "ultima": {"acertos": int(sem.sum()), "taxa": float(sem.mean())},
         }
     return saida
@@ -338,6 +343,18 @@ def selecionar_clipes(dados: Path, tipo: str | None, limite: int, seed: int = 7)
 # --------------------------------------------------------------------------- #
 # escolha do limiar e relatorio
 # --------------------------------------------------------------------------- #
+def intervalo_wilson(acertos: int, total: int, z: float = 1.96) -> tuple[float, float]:
+    """Intervalo bilateral de 95% de Wilson para proporcao observada."""
+    if total <= 0:
+        return float("nan"), float("nan")
+    p = acertos / total
+    z2 = z * z
+    denominador = 1.0 + z2 / total
+    centro = (p + z2 / (2.0 * total)) / denominador
+    margem = z / denominador * math.sqrt(p * (1.0 - p) / total + z2 / (4.0 * total * total))
+    return max(0.0, centro - margem), min(1.0, centro + margem)
+
+
 def acerto_total(clipes: dict, limiar: float) -> tuple[int, int]:
     acertos = sum(c["por_limiar"][limiar]["com"]["acertos"] for c in clipes.values())
     total = sum(c["clipes"] for c in clipes.values())
@@ -368,12 +385,16 @@ def escolher_limiar(resultado: dict, limiares: list[float]) -> dict:
         })
     # A meta de conversa vale para o conjunto somado (MLS + futebol); cada
     # conjunto aparece na tabela e o pior tambem e reportado no relatorio.
-    viaveis = [x for x in linhas if x["cumpriu"] == 3]
+    viaveis = [x for x in linhas
+               if x["fa_conversa"] <= METAS["fa_conversa"]
+               and x["fa_jogo_musica"] <= METAS["fa_jogo_musica"]]
     if viaveis:
-        escolhido = max(viaveis, key=lambda x: (x["acerto"], -x["fa_conversa"] - x["fa_jogo_musica"]))
+        escolhido = max(viaveis, key=lambda x: (x["acerto"], -x["fa_conversa"] - x["fa_jogo_musica"], x["limiar"]))
+        meta_fa_atingida = True
     else:
-        escolhido = max(linhas, key=lambda x: (x["cumpriu"], x["acerto"], -x["fa_conversa"] - x["fa_jogo_musica"]))
-    return {"escolhido": escolhido, "linhas": linhas}
+        escolhido = max(linhas, key=lambda x: x["limiar"])
+        meta_fa_atingida = False
+    return {"escolhido": escolhido, "linhas": linhas, "meta_fa_atingida": meta_fa_atingida}
 
 
 def _fmt_fa(item) -> str:
@@ -409,7 +430,11 @@ def tabela_markdown(resultado: dict, limiares: list[float], com_portao: bool) ->
         def acerto(chave):
             item = dict(c[chave]["por_limiar"][limiar][modo])
             item["clipes"] = c[chave]["clipes"]
-            return _fmt_acc(item)
+            texto = _fmt_acc(item)
+            if chave == "real_teste" and item.get("ic95_wilson"):
+                baixo, alto = item["ic95_wilson"]
+                texto += f" (IC95 Wilson {100 * baixo:.1f}–{100 * alto:.1f}%)"
+            return texto
         acertos, total = acerto_total(c, limiar)
         total_txt = f"{100 * acertos / total:.1f}% ({acertos}/{total})" if total else "n/d"
         val = resultado["validacao"]["por_limiar"][limiar][modo]
@@ -444,6 +469,8 @@ def imprimir_resumo(resultado: dict, escolha: dict) -> None:
         f"jogo+musica: {e['fa_jogo_musica']:.2f} [meta <= 0,2: {'OK' if e['metas']['fa_jogo_musica'] else 'NAO'}]"
     )
     print(f"  metas cumpridas: {e['cumpriu']}/3")
+    if not escolha["meta_fa_atingida"]:
+        print("  meta de FA não atingida")
     print("-" * 100)
 
 

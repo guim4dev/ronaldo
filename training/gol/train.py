@@ -26,6 +26,9 @@ import argparse
 import json
 import logging
 import math
+import os
+import re
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -198,13 +201,59 @@ class PositivosAlinhados:
         return maximo, ultima
 
 
-def _carregar_vetor(caminho: Path, mmap: bool = True) -> np.ndarray:
+def validar_fonte_publica(caminho: str | Path, nome: str = "fonte") -> Path:
+    real = Path(os.path.realpath(Path(caminho).expanduser()))
+    pasta = real if real.is_dir() else real.parent
+    for ancestral in (pasta, *pasta.parents):
+        marcador = ancestral / ".privado"
+        if marcador.is_file():
+            raise SystemExit(f"recusado {nome}: {real} fica sob o marcador privado {marcador}")
+    return real
+
+
+def validar_fontes_publicas(dados: Path) -> None:
+    """Checa as fontes conhecidas antes de carregar qualquer dado de treino."""
+    validar_fonte_publica(dados, "--dados")
+    raizes = [
+        dados / "features",
+        dados / "raw" / "openwakeword",
+        dados / "treino",
+        *(dados / "raw" / nome / "wav" for nome in CATEGORIAS),
+    ]
+    for raiz in raizes:
+        validar_fonte_publica(raiz, "fonte de treino")
+        if not raiz.is_dir():
+            continue
+        for pasta, diretorios, arquivos in os.walk(raiz, followlinks=False):
+            for nome in diretorios + arquivos:
+                validar_fonte_publica(Path(pasta) / nome, "fonte de treino")
+
+
+def _carregar_vetor(caminho: Path, mmap: bool = True,
+                    permitir_privado: bool = False) -> np.ndarray:
+    if not permitir_privado:
+        validar_fonte_publica(caminho)
     if not caminho.exists():
         raise SystemExit(f"falta {caminho} (ver DADOS.md; espere o MANIFESTO.json)")
     return np.load(caminho, mmap_mode="r" if mmap else None)
 
 
-def carregar_dados(dados: Path, val_frac: float, seed: int) -> dict:
+def _split_real_por_video(nomes: list[str], videos: list[str], val_frac: float,
+                          seed: int) -> tuple[np.ndarray, np.ndarray]:
+    if not videos or len(nomes) == 0:
+        raise SystemExit("real_split.json nao tem clipes e videos de treino")
+    val_videos = set(str(v) for v in np.random.default_rng(seed).permutation(videos)[
+                     :max(1, int(round(len(videos) * val_frac)))])
+    ids = [re.sub(r"_\d+$", "", Path(nome).stem) for nome in nomes]
+    treino = np.asarray([i for i, video in enumerate(ids) if video not in val_videos], dtype=np.int64)
+    validacao = np.asarray([i for i, video in enumerate(ids) if video in val_videos], dtype=np.int64)
+    if not len(treino) or not len(validacao):
+        raise SystemExit("split por video de real_train deixou treino ou validacao vazio")
+    return treino, validacao
+
+
+def carregar_dados(dados: Path, val_frac: float, seed: int,
+                   permitir_privado: bool = False) -> dict:
     feat = dados / "features"
     alinhado = None
     pos = None
@@ -216,30 +265,67 @@ def carregar_dados(dados: Path, val_frac: float, seed: int) -> dict:
         offsets_p = feat / "pos_v2_offsets.npy"
         meta_p = feat / "pos_v2_meta.json"
     if stream_p.exists() and offsets_p.exists() and meta_p.exists():
+        if not permitir_privado:
+            validar_fonte_publica(stream_p); validar_fonte_publica(offsets_p); validar_fonte_publica(meta_p)
         alinhado = PositivosAlinhados(
             np.load(stream_p, mmap_mode="r"), np.load(offsets_p),
             json.loads(meta_p.read_text(encoding="utf-8")), val_frac, seed,
         )
     if (feat / "pos_train.npy").exists():
-        pos = _carregar_vetor(feat / "pos_train.npy")
+        pos = _carregar_vetor(feat / "pos_train.npy", permitir_privado=permitir_privado)
     elif alinhado is None:
         raise SystemExit(f"falta {feat / 'pos_train.npy'} (e nao ha positivos alinhados)")
-    neg = _carregar_vetor(feat / "neg_train.npy")
-    acav = _carregar_vetor(dados / "raw" / "openwakeword" / ACAV_NOME)
-    val = _carregar_vetor(dados / "raw" / "openwakeword" / VAL_NOME)
+    neg = _carregar_vetor(feat / "neg_train.npy", permitir_privado=permitir_privado)
+    acav = _carregar_vetor(dados / "raw" / "openwakeword" / ACAV_NOME,
+                            permitir_privado=permitir_privado)
+    val = _carregar_vetor(dados / "raw" / "openwakeword" / VAL_NOME,
+                          permitir_privado=permitir_privado)
     game_hard = None
     hard_p = dados / "treino" / "game_hard.npy"
+    if not permitir_privado:
+        validar_fonte_publica(hard_p)
     if hard_p.exists():
         game_hard = np.load(hard_p, mmap_mode="r")
         log.info("negativos dificeis de jogo: %s", game_hard.shape)
 
+    real_train = None
+    real_treino_idx = np.zeros(0, dtype=np.int64)
+    real_val_idx = np.zeros(0, dtype=np.int64)
+    real_p = feat / "real_train.npy"
+    split_p = feat / "real_split.json"
+    if real_p.exists():
+        if not permitir_privado:
+            validar_fonte_publica(real_p); validar_fonte_publica(split_p)
+        if not split_p.exists():
+            raise SystemExit(f"falta {split_p} para separar real_train por video")
+        real_train = _carregar_vetor(real_p, permitir_privado=permitir_privado)
+        split = json.loads(split_p.read_text(encoding="utf-8"))
+        nomes = split.get("treino", [])
+        videos = split.get("videos_treino", [])
+        if len(nomes) != len(real_train) or not videos:
+            raise SystemExit(f"real_split.json nao corresponde a {real_p}")
+        real_treino_idx, real_val_idx = _split_real_por_video(nomes, videos, val_frac, seed)
+        n_val_videos = max(1, int(round(len(videos) * val_frac)))
+        log.info("real_train: %d clipes, treino=%d, val=%d, videos val=%d",
+                 len(real_train), len(real_treino_idx), len(real_val_idx), n_val_videos)
+
     streams_treino = []
     for categoria in CATEGORIAS:
         meta_p = feat / f"stream_{categoria}_treino_meta.json"
+        if not permitir_privado:
+            validar_fonte_publica(meta_p)
         if not meta_p.exists():
             raise SystemExit(f"falta {meta_p} (rode features.py --streaming)")
         meta = json.loads(meta_p.read_text(encoding="utf-8"))
-        feats = _carregar_vetor(dados / meta["arquivo_features"])
+        feats_p = dados / meta["arquivo_features"]
+        feats = _carregar_vetor(feats_p, permitir_privado=permitir_privado)
+        wav_dir = dados / "raw" / categoria / "wav"
+        raw_dir = dados / "raw" / categoria
+        if not permitir_privado:
+            pasta_audio = wav_dir if not meta.get("arquivos") or (wav_dir / meta["arquivos"][0]).exists() else raw_dir
+            validar_fonte_publica(pasta_audio)
+            for nome in meta.get("arquivos", []):
+                validar_fonte_publica(pasta_audio / nome)
         segmentos = M.segmentos_do_meta(meta, dados, categoria)
         streams_treino.append(AmostradorStream(feats, segmentos, categoria))
         log.info("stream treino %s: %d chunks, %d arquivos", categoria, len(feats), len(segmentos))
@@ -260,6 +346,9 @@ def carregar_dados(dados: Path, val_frac: float, seed: int) -> dict:
         "val": val,
         "streams": streams_treino,
         "game_hard": game_hard,
+        "real_train": real_train,
+        "real_treino_idx": real_treino_idx,
+        "real_val_idx": real_val_idx,
         "pos_treino": pos_treino,
         "pos_val": pos_val,
     }
@@ -324,21 +413,31 @@ def _linhas_mmap(arr, indices: np.ndarray) -> np.ndarray:
 
 def montar_lote(d: dict, args, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
     partes_x, partes_y = [], []
+    n_real = (int(round(args.lote_pos * args.frac_real_positivo))
+              if len(d.get("real_treino_idx", [])) else 0)
+    if args.frac_real_positivo > 0 and d.get("real_train") is None:
+        raise SystemExit("--frac-real-positivo exige features/real_train.npy e real_split.json")
+    if n_real:
+        idx_real = rng.choice(d["real_treino_idx"], size=n_real, replace=True)
+        partes_x.append(_linhas_mmap(d["real_train"], idx_real))
+        partes_y.append(np.ones(n_real, np.float32))
+    n_positivo = args.lote_pos - n_real
     if d["alinhado"] is not None:
-        n_antigo = int(round(args.lote_pos * args.pos_antigo_frac)) if d["pos"] is not None else 0
-        n_alinhado = args.lote_pos - n_antigo
+        n_antigo = int(round(n_positivo * args.pos_antigo_frac)) if d["pos"] is not None else 0
+        n_alinhado = n_positivo - n_antigo
         if n_alinhado > 0:
             x_pos, y_pos = d["alinhado"].amostrar(
-                n_alinhado, rng, args.frac_janela_negativa, args.frac_real_positivo)
+                n_alinhado, rng, args.frac_janela_negativa, 0.0)
             partes_x.append(x_pos); partes_y.append(y_pos)
         if n_antigo > 0:
             idx = rng.choice(d["pos_treino"], size=n_antigo, replace=True)
             partes_x.append(_linhas_mmap(d["pos"], idx))
             partes_y.append(np.ones(n_antigo, np.float32))
     else:
-        pos_idx = rng.choice(d["pos_treino"], size=args.lote_pos, replace=True)
-        partes_x.append(_linhas_mmap(d["pos"], pos_idx))
-        partes_y.append(np.ones(args.lote_pos, np.float32))
+        pos_idx = rng.choice(d["pos_treino"], size=n_positivo, replace=True)
+        if n_positivo:
+            partes_x.append(_linhas_mmap(d["pos"], pos_idx))
+            partes_y.append(np.ones(n_positivo, np.float32))
     neg_idx = rng.choice(len(d["neg"]), size=args.lote_neg, replace=True)
     acav_idx = rng.integers(0, len(d["acav"]), size=args.lote_acav)
     partes_x.append(_linhas_mmap(d["neg"], neg_idx))
@@ -389,6 +488,11 @@ def metricas_validacao(rede, d: dict, limiares: list[float]) -> dict:
         pos_val = np.asarray(d["pos"][d["pos_val"]], dtype=np.float32)
         with torch.no_grad():
             pos_scores = rede(torch.from_numpy(pos_val)).numpy().reshape(-1)
+    if d.get("real_train") is not None and len(d["real_val_idx"]):
+        real_val = _linhas_mmap(d["real_train"], d["real_val_idx"])
+        with torch.no_grad():
+            real_scores = rede(torch.from_numpy(real_val)).numpy().reshape(-1)
+        pos_scores = np.concatenate((pos_scores, real_scores))
     val_feats = d["val"]
     indices, scores = scores_janelas_torch(rede, val_feats)
     horas = len(indices) * M.PASSO_S / 3600.0
@@ -475,13 +579,66 @@ def verificar_modelo(caminho: Path) -> dict:
     }
 
 
+def _caminho_fora_de_git(caminho: str | Path, nome: str) -> Path:
+    """Valida caminhos pessoais sem permitir escrita dentro de qualquer worktree."""
+    real = Path(os.path.realpath(Path(caminho).expanduser()))
+    if ".git" in real.parts:
+        raise SystemExit(f"{nome} deve ficar fora de caminhos .git: {real}")
+    if any(parte == "models" for parte in real.parts):
+        raise SystemExit(f"{nome} deve ficar fora de qualquer pasta models/: {real}")
+
+    ancestral = real
+    if ancestral.is_file():
+        ancestral = ancestral.parent
+    while not ancestral.exists() and ancestral != ancestral.parent:
+        ancestral = ancestral.parent
+    try:
+        resultado = subprocess.run(
+            ["git", "-C", str(ancestral), "rev-parse", "--show-toplevel"],
+            capture_output=True, text=True,
+        )
+    except OSError as erro:
+        raise SystemExit(f"nao foi possivel validar {nome} com Git: {erro}") from erro
+    if resultado.returncode != 0:
+        if "not a git repository" in resultado.stderr.lower():
+            return real
+        raise SystemExit(f"nao foi possivel validar {nome} com Git: {resultado.stderr.strip()}")
+    raiz = resultado.stdout.strip()
+    if not raiz:
+        raise SystemExit(f"nao foi possivel validar {nome}: Git nao informou a raiz")
+    raiz_real = Path(os.path.realpath(raiz))
+    try:
+        real.relative_to(raiz_real)
+    except ValueError:
+        return real
+    raise SystemExit(f"{nome} deve ficar fora de qualquer worktree Git: {real}")
+
+
+def validar_caminhos_pessoais(saida: str | Path | None, dados: str | Path | None) -> None:
+    if saida is None:
+        raise SystemExit("--pessoal exige --saida explícito")
+    _caminho_fora_de_git(saida, "--saida")
+    if dados is not None:
+        _caminho_fora_de_git(dados, "--pessoal-dados")
+
+
+def gravar_modelo(rede, caminho: Path, pessoal: bool = False,
+                 pessoal_dados: str | Path | None = None) -> None:
+    """Revalida o destino pessoal imediatamente antes de gravar o ONNX."""
+    if pessoal:
+        validar_caminhos_pessoais(caminho, pessoal_dados)
+    exportar(rede, caminho)
+
+
 # --------------------------------------------------------------------------- #
 # main
 # --------------------------------------------------------------------------- #
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--dados", default=str(Path.home() / "data" / "gol"))
-    ap.add_argument("--saida", default=str(REPO / "models" / "gol_grito.onnx"))
+    ap.add_argument("--saida")
+    ap.add_argument("--pessoal", action="store_true", help="exige saída e dados pessoais fora de worktrees Git")
+    ap.add_argument("--pessoal-dados", help="pasta de áudio pessoal; deve ficar fora de worktrees Git e models/")
     ap.add_argument("--variacao", default="a")
     ap.add_argument("--epocas", type=int, default=24)
     ap.add_argument("--passos-por-epoca", type=int, default=0, help="0 = len(pos_treino)//lote_pos")
@@ -514,8 +671,15 @@ def main() -> None:
     ap.add_argument("--smoke", action="store_true", help="nao exige MANIFESTO.json")
     args = ap.parse_args()
 
+    if args.pessoal:
+        validar_caminhos_pessoais(args.saida, args.pessoal_dados)
+    elif args.saida is None:
+        args.saida = str(REPO / "models" / "gol_grito.onnx")
+
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     dados = Path(args.dados).expanduser()
+    if not args.pessoal:
+        validar_fontes_publicas(dados)
     if not args.smoke and not (dados / "MANIFESTO.json").exists():
         raise SystemExit(f"aguarde {dados / 'MANIFESTO.json'} (o outro soldado escreve no fim)")
 
@@ -530,7 +694,7 @@ def main() -> None:
     np.random.seed(args.seed)
     rng = np.random.default_rng(args.seed)
 
-    d = carregar_dados(dados, args.val_frac, args.seed)
+    d = carregar_dados(dados, args.val_frac, args.seed, permitir_privado=args.pessoal)
     n_treino = (len(d["alinhado"].treino_idx) if d["alinhado"] is not None
                 else len(d["pos_treino"]))
     n_val = len(d["alinhado"].val_idx) if d["alinhado"] is not None else len(d["pos_val"])
@@ -616,7 +780,7 @@ def main() -> None:
         rede.load_state_dict(melhor)
         log.info("checkpoint escolhido: epoca %s (chave %s)", melhor_epoca, melhor_chave)
     caminho = Path(args.saida)
-    exportar(rede, caminho)
+    gravar_modelo(rede, caminho, args.pessoal, args.pessoal_dados)
     verificacao = verificar_modelo(caminho)
     log.info("verificacao: %s", json.dumps(verificacao, ensure_ascii=False))
 

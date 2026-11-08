@@ -35,6 +35,128 @@ def test_chunk_nivel_tem_o_rms_pedido() -> None:
         assert abs(20 * math.log10(rms) - db) < 0.01, db
 
 
+def _validar_pessoal(saida: Path | None, dados: Path | None = None) -> subprocess.CompletedProcess[str]:
+    comando = [sys.executable, str(GOL / "train.py"), "--pessoal"]
+    if saida is not None:
+        comando += ["--saida", str(saida)]
+    if dados is not None:
+        comando += ["--pessoal-dados", str(dados)]
+    return subprocess.run(comando, capture_output=True, text=True, timeout=30)
+
+
+def test_pessoal_exige_saida() -> None:
+    r = _validar_pessoal(None)
+    assert r.returncode != 0
+    assert "--pessoal exige --saida explícito" in r.stderr
+
+
+def test_pessoal_recusa_saida_dentro_do_repo(tmp_path: Path) -> None:
+    r = _validar_pessoal(REPO / "training" / "gol" / "nao-criar.onnx")
+    assert r.returncode != 0
+    assert "fora de qualquer worktree Git" in r.stderr
+    assert not (REPO / "training" / "gol" / "nao-criar.onnx").exists()
+
+
+def test_pessoal_recusa_saida_dentro_de_git() -> None:
+    r = _validar_pessoal(REPO / ".git" / "nao-criar.onnx")
+    assert r.returncode != 0
+    assert "caminhos .git" in r.stderr
+
+
+def test_pessoal_falha_fechado_se_rev_parse_falhar(tmp_path: Path, monkeypatch) -> None:
+    import train as T
+
+    def falha(*args, **kwargs):
+        return subprocess.CompletedProcess(args[0], 128, "", "fatal: permission denied")
+
+    monkeypatch.setattr(T.subprocess, "run", falha)
+    with pytest.raises(SystemExit, match="nao foi possivel validar.*Git"):
+        T._caminho_fora_de_git(tmp_path / "modelo.onnx", "--saida")
+
+
+def test_gravar_modelo_revalida_destino_pessoal(tmp_path: Path) -> None:
+    import train as T
+
+    with pytest.raises(SystemExit, match="fora de qualquer worktree Git"):
+        T.gravar_modelo(None, REPO / "training" / "gol" / "nao-criar.onnx", pessoal=True)
+    assert not (REPO / "training" / "gol" / "nao-criar.onnx").exists()
+
+
+def test_pessoal_recusa_symlink_externo_para_dentro_do_repo(tmp_path: Path) -> None:
+    link = tmp_path / "saida.onnx"
+    link.symlink_to(REPO / "README.md")
+    r = _validar_pessoal(link)
+    assert r.returncode != 0
+    assert "fora de qualquer worktree Git" in r.stderr
+
+
+def test_pessoal_recusa_models_mesmo_fora_do_repo(tmp_path: Path) -> None:
+    r = _validar_pessoal(tmp_path / "models" / "gol_grito.onnx")
+    assert r.returncode != 0
+    assert "fora de qualquer pasta models/" in r.stderr
+
+
+def test_pessoal_aceita_saida_e_dados_fora_de_git(tmp_path: Path) -> None:
+    import train as T
+
+    fora = tmp_path / "privado"
+    T.validar_caminhos_pessoais(fora / "modelo.onnx", fora / "audio")
+
+
+def test_pessoal_recusa_dados_dentro_do_repo(tmp_path: Path) -> None:
+    r = _validar_pessoal(tmp_path / "modelo.onnx", REPO / "training" / "gol" / "audio")
+    assert r.returncode != 0
+    assert "--pessoal-dados deve ficar fora de qualquer worktree Git" in r.stderr
+
+
+def test_repo_nao_rastreia_arquivos_de_audio() -> None:
+    r = subprocess.run(["git", "-C", str(REPO), "ls-files"], check=True,
+                       capture_output=True, text=True)
+    extensoes = {".wav", ".mp3", ".flac", ".ogg", ".m4a", ".opus", ".aac"}
+    audios = [p for p in r.stdout.splitlines() if Path(p).suffix.lower() in extensoes]
+    assert not audios, f"arquivos de áudio rastreados: {audios}"
+
+
+def test_treino_generico_recusa_dados_com_marcador_privado(tmp_path: Path) -> None:
+    dados = tmp_path / "dados"
+    dados.mkdir()
+    (dados / ".privado").touch()
+    saida = tmp_path / "modelo.onnx"
+    comando = [sys.executable, str(GOL / "train.py"), "--dados", str(dados), "--saida", str(saida)]
+    r = subprocess.run(comando, capture_output=True, text=True, timeout=30)
+    assert r.returncode != 0
+    assert "marcador privado" in r.stderr
+    assert not saida.exists()
+
+
+def test_fonte_sob_diretorio_com_marcador_privado_e_recusada(tmp_path: Path) -> None:
+    import train as T
+
+    privado = tmp_path / "privado"
+    (privado / "features").mkdir(parents=True)
+    (privado / ".privado").touch()
+    with pytest.raises(SystemExit, match="marcador privado"):
+        T.validar_fonte_publica(privado / "features" / "real_train.npy")
+
+
+def test_symlink_de_fonte_para_pasta_privada_e_recusado(tmp_path: Path) -> None:
+    import train as T
+
+    privado = tmp_path / "privado"
+    privado.mkdir()
+    (privado / ".privado").touch()
+    link = tmp_path / "fonte"
+    link.symlink_to(privado, target_is_directory=True)
+    with pytest.raises(SystemExit, match="marcador privado"):
+        T.validar_fonte_publica(link / "features.npy")
+
+
+def test_dados_sem_marcador_privado_passam(tmp_path: Path) -> None:
+    import train as T
+
+    T.validar_fontes_publicas(tmp_path / "dados-publicos")
+
+
 def test_limite_poisson_zero_alarmes() -> None:
     # 0 alarmes em 16 h -> ~3/T = 0,1875/h (o limite que o relatorio cita)
     assert abs(M.limite_poisson(0, 16.0) - 3.0 / 16.0) < 1e-9
@@ -101,6 +223,29 @@ def test_alinhamento_monta_janelas_da_producao() -> None:
     assert x.shape == (200, 16, 96) and y.shape == (200,)
     assert set(np.unique(y)) <= {0.0, 1.0}
     assert 0.1 < float(np.mean(y == 0)) < 0.45
+
+
+def test_lote_usa_frac_real_positivo() -> None:
+    from types import SimpleNamespace
+    import train as T
+
+    d = {
+        "real_train": np.full((4, M.JANELA, M.DIM), 2.0, np.float16),
+        "real_treino_idx": np.arange(4),
+        "alinhado": None,
+        "pos": np.full((6, M.JANELA, M.DIM), 1.0, np.float16),
+        "pos_treino": np.arange(6),
+        "neg": np.zeros((0, M.JANELA, M.DIM), np.float16),
+        "acav": np.zeros((0, M.JANELA, M.DIM), np.float16),
+        "game_hard": None,
+        "streams": [],
+    }
+    args = SimpleNamespace(lote_pos=10, frac_real_positivo=0.4, pos_antigo_frac=0.0,
+                           frac_janela_negativa=0.0, lote_neg=0, lote_acav=0,
+                           lote_game_hard=0, lote_stream=0)
+    x, y = T.montar_lote(d, args, np.random.default_rng(0))
+    assert int(y.sum()) == 10
+    assert int(np.sum(x[:, 0, 0] == 2.0)) == 4
 
 
 def test_iter_janelas_nao_cruza_segmento() -> None:
