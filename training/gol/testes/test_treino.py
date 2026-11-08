@@ -57,6 +57,31 @@ def test_pessoal_recusa_saida_dentro_do_repo(tmp_path: Path) -> None:
     assert not (REPO / "training" / "gol" / "nao-criar.onnx").exists()
 
 
+def test_pessoal_recusa_saida_dentro_de_git() -> None:
+    r = _validar_pessoal(REPO / ".git" / "nao-criar.onnx")
+    assert r.returncode != 0
+    assert "caminhos .git" in r.stderr
+
+
+def test_pessoal_falha_fechado_se_rev_parse_falhar(tmp_path: Path, monkeypatch) -> None:
+    import train as T
+
+    def falha(*args, **kwargs):
+        return subprocess.CompletedProcess(args[0], 128, "", "fatal: permission denied")
+
+    monkeypatch.setattr(T.subprocess, "run", falha)
+    with pytest.raises(SystemExit, match="nao foi possivel validar.*Git"):
+        T._caminho_fora_de_git(tmp_path / "modelo.onnx", "--saida")
+
+
+def test_gravar_modelo_revalida_destino_pessoal(tmp_path: Path) -> None:
+    import train as T
+
+    with pytest.raises(SystemExit, match="fora de qualquer worktree Git"):
+        T.gravar_modelo(None, REPO / "training" / "gol" / "nao-criar.onnx", pessoal=True)
+    assert not (REPO / "training" / "gol" / "nao-criar.onnx").exists()
+
+
 def test_pessoal_recusa_symlink_externo_para_dentro_do_repo(tmp_path: Path) -> None:
     link = tmp_path / "saida.onnx"
     link.symlink_to(REPO / "README.md")

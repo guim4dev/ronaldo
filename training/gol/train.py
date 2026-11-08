@@ -480,6 +480,8 @@ def verificar_modelo(caminho: Path) -> dict:
 def _caminho_fora_de_git(caminho: str | Path, nome: str) -> Path:
     """Valida caminhos pessoais sem permitir escrita dentro de qualquer worktree."""
     real = Path(os.path.realpath(Path(caminho).expanduser()))
+    if ".git" in real.parts:
+        raise SystemExit(f"{nome} deve ficar fora de caminhos .git: {real}")
     if any(parte == "models" for parte in real.parts):
         raise SystemExit(f"{nome} deve ficar fora de qualquer pasta models/: {real}")
 
@@ -489,12 +491,19 @@ def _caminho_fora_de_git(caminho: str | Path, nome: str) -> Path:
     while not ancestral.exists() and ancestral != ancestral.parent:
         ancestral = ancestral.parent
     try:
-        raiz = subprocess.run(
+        resultado = subprocess.run(
             ["git", "-C", str(ancestral), "rev-parse", "--show-toplevel"],
-            check=True, capture_output=True, text=True,
-        ).stdout.strip()
-    except subprocess.CalledProcessError:
-        return real
+            capture_output=True, text=True,
+        )
+    except OSError as erro:
+        raise SystemExit(f"nao foi possivel validar {nome} com Git: {erro}") from erro
+    if resultado.returncode != 0:
+        if "not a git repository" in resultado.stderr.lower():
+            return real
+        raise SystemExit(f"nao foi possivel validar {nome} com Git: {resultado.stderr.strip()}")
+    raiz = resultado.stdout.strip()
+    if not raiz:
+        raise SystemExit(f"nao foi possivel validar {nome}: Git nao informou a raiz")
     raiz_real = Path(os.path.realpath(raiz))
     try:
         real.relative_to(raiz_real)
@@ -509,6 +518,14 @@ def validar_caminhos_pessoais(saida: str | Path | None, dados: str | Path | None
     _caminho_fora_de_git(saida, "--saida")
     if dados is not None:
         _caminho_fora_de_git(dados, "--pessoal-dados")
+
+
+def gravar_modelo(rede, caminho: Path, pessoal: bool = False,
+                 pessoal_dados: str | Path | None = None) -> None:
+    """Revalida o destino pessoal imediatamente antes de gravar o ONNX."""
+    if pessoal:
+        validar_caminhos_pessoais(caminho, pessoal_dados)
+    exportar(rede, caminho)
 
 
 # --------------------------------------------------------------------------- #
@@ -659,7 +676,7 @@ def main() -> None:
         rede.load_state_dict(melhor)
         log.info("checkpoint escolhido: epoca %s (chave %s)", melhor_epoca, melhor_chave)
     caminho = Path(args.saida)
-    exportar(rede, caminho)
+    gravar_modelo(rede, caminho, args.pessoal, args.pessoal_dados)
     verificacao = verificar_modelo(caminho)
     log.info("verificacao: %s", json.dumps(verificacao, ensure_ascii=False))
 
