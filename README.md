@@ -108,6 +108,8 @@ usa um servidor Wyoming (Kokoro/Piper) e escreve um WAV temporário tocado com `
 
 ## Grito de gol
 
+**Experimental: `gol_grito.onnx` não é recomendado para uso.** O modelo cumpre 1/3 metas, acerta 43,8% no limiar 0,9 e detectou 0/17 gritos humanos reais. Não habilite a rota até um modelo cumprir as metas e passar pela aceitação ao vivo (`tools/grito_ao_vivo.py`).
+
 Uma rota `action = "som"` toca um som local quando o modelo ouve o grito — sem "Ronaldo", sem Hex e
 sem passar pelo modo voz. O comando roda sem esperar e `~` é expandido em cada argumento.
 

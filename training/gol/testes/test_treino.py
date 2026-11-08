@@ -40,25 +40,31 @@ def _validar_pessoal(saida: Path | None, dados: Path | None = None) -> subproces
     if saida is not None:
         comando += ["--saida", str(saida)]
     if dados is not None:
-        comando += ["--pessoal-dados", str(dados)]
+        comando += ["--dados", str(dados)]
     return subprocess.run(comando, capture_output=True, text=True, timeout=30)
 
 
 def test_pessoal_exige_saida() -> None:
-    r = _validar_pessoal(None)
+    r = _validar_pessoal(None, Path("/tmp/gol-test-dados"))
     assert r.returncode != 0
     assert "--pessoal exige --saida explícito" in r.stderr
 
 
+def test_pessoal_exige_dados() -> None:
+    r = _validar_pessoal(Path("/tmp/modelo.onnx"))
+    assert r.returncode != 0
+    assert "--pessoal exige --dados explícito" in r.stderr
+
+
 def test_pessoal_recusa_saida_dentro_do_repo(tmp_path: Path) -> None:
-    r = _validar_pessoal(REPO / "training" / "gol" / "nao-criar.onnx")
+    r = _validar_pessoal(REPO / "training" / "gol" / "nao-criar.onnx", tmp_path / "dados")
     assert r.returncode != 0
     assert "fora de qualquer worktree Git" in r.stderr
     assert not (REPO / "training" / "gol" / "nao-criar.onnx").exists()
 
 
 def test_pessoal_recusa_saida_dentro_de_git() -> None:
-    r = _validar_pessoal(REPO / ".git" / "nao-criar.onnx")
+    r = _validar_pessoal(REPO / ".git" / "nao-criar.onnx", Path("/tmp/gol-test-dados"))
     assert r.returncode != 0
     assert "caminhos .git" in r.stderr
 
@@ -78,20 +84,21 @@ def test_gravar_modelo_revalida_destino_pessoal(tmp_path: Path) -> None:
     import train as T
 
     with pytest.raises(SystemExit, match="fora de qualquer worktree Git"):
-        T.gravar_modelo(None, REPO / "training" / "gol" / "nao-criar.onnx", pessoal=True)
+        T.gravar_modelo(None, REPO / "training" / "gol" / "nao-criar.onnx",
+                        pessoal=True, dados=tmp_path / "dados")
     assert not (REPO / "training" / "gol" / "nao-criar.onnx").exists()
 
 
 def test_pessoal_recusa_symlink_externo_para_dentro_do_repo(tmp_path: Path) -> None:
     link = tmp_path / "saida.onnx"
     link.symlink_to(REPO / "README.md")
-    r = _validar_pessoal(link)
+    r = _validar_pessoal(link, tmp_path / "dados")
     assert r.returncode != 0
     assert "fora de qualquer worktree Git" in r.stderr
 
 
 def test_pessoal_recusa_models_mesmo_fora_do_repo(tmp_path: Path) -> None:
-    r = _validar_pessoal(tmp_path / "models" / "gol_grito.onnx")
+    r = _validar_pessoal(tmp_path / "models" / "gol_grito.onnx", tmp_path / "dados")
     assert r.returncode != 0
     assert "fora de qualquer pasta models/" in r.stderr
 
@@ -106,7 +113,24 @@ def test_pessoal_aceita_saida_e_dados_fora_de_git(tmp_path: Path) -> None:
 def test_pessoal_recusa_dados_dentro_do_repo(tmp_path: Path) -> None:
     r = _validar_pessoal(tmp_path / "modelo.onnx", REPO / "training" / "gol" / "audio")
     assert r.returncode != 0
-    assert "--pessoal-dados deve ficar fora de qualquer worktree Git" in r.stderr
+    assert "--dados deve ficar fora de qualquer worktree Git" in r.stderr
+
+
+def test_pessoal_recusa_dados_por_symlink_para_repo(tmp_path: Path) -> None:
+    link = tmp_path / "dados-link"
+    link.symlink_to(REPO / "training" / "gol", target_is_directory=True)
+    r = _validar_pessoal(tmp_path / "modelo.onnx", link)
+    assert r.returncode != 0
+    assert "--dados deve ficar fora de qualquer worktree Git" in r.stderr
+
+
+def test_pessoal_aceita_dados_fora_de_git_ate_manifesto(tmp_path: Path) -> None:
+    dados = tmp_path / "dados-pessoais"
+    dados.mkdir()
+    r = _validar_pessoal(tmp_path / "modelo.onnx", dados)
+    assert r.returncode != 0
+    assert "--dados deve ficar fora" not in r.stderr
+    assert "MANIFESTO.json" in r.stderr
 
 
 def test_repo_nao_rastreia_arquivos_de_audio() -> None:

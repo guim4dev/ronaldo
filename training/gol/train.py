@@ -617,16 +617,17 @@ def _caminho_fora_de_git(caminho: str | Path, nome: str) -> Path:
 def validar_caminhos_pessoais(saida: str | Path | None, dados: str | Path | None) -> None:
     if saida is None:
         raise SystemExit("--pessoal exige --saida explícito")
+    if dados is None:
+        raise SystemExit("--pessoal exige --dados explícito")
     _caminho_fora_de_git(saida, "--saida")
-    if dados is not None:
-        _caminho_fora_de_git(dados, "--pessoal-dados")
+    _caminho_fora_de_git(dados, "--dados")
 
 
 def gravar_modelo(rede, caminho: Path, pessoal: bool = False,
-                 pessoal_dados: str | Path | None = None) -> None:
+                 dados: str | Path | None = None) -> None:
     """Revalida o destino pessoal imediatamente antes de gravar o ONNX."""
     if pessoal:
-        validar_caminhos_pessoais(caminho, pessoal_dados)
+        validar_caminhos_pessoais(caminho, dados)
     exportar(rede, caminho)
 
 
@@ -635,10 +636,9 @@ def gravar_modelo(rede, caminho: Path, pessoal: bool = False,
 # --------------------------------------------------------------------------- #
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--dados", default=str(Path.home() / "data" / "gol"))
+    ap.add_argument("--dados", help="raiz de dados; obrigatória com --pessoal")
     ap.add_argument("--saida")
     ap.add_argument("--pessoal", action="store_true", help="exige saída e dados pessoais fora de worktrees Git")
-    ap.add_argument("--pessoal-dados", help="pasta de áudio pessoal; deve ficar fora de worktrees Git e models/")
     ap.add_argument("--variacao", default="a")
     ap.add_argument("--epocas", type=int, default=24)
     ap.add_argument("--passos-por-epoca", type=int, default=0, help="0 = len(pos_treino)//lote_pos")
@@ -672,9 +672,11 @@ def main() -> None:
     args = ap.parse_args()
 
     if args.pessoal:
-        validar_caminhos_pessoais(args.saida, args.pessoal_dados)
+        validar_caminhos_pessoais(args.saida, args.dados)
     elif args.saida is None:
         args.saida = str(REPO / "models" / "gol_grito.onnx")
+    if args.dados is None:
+        args.dados = str(Path.home() / "data" / "gol")
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     dados = Path(args.dados).expanduser()
@@ -717,6 +719,8 @@ def main() -> None:
     melhor_epoca = None
     historico = []
     saida_dir = dados / "treino"
+    if args.pessoal:
+        _caminho_fora_de_git(dados, "--dados")
     saida_dir.mkdir(parents=True, exist_ok=True)
     t0 = time.time()
     sem_melhora = 0
@@ -780,7 +784,7 @@ def main() -> None:
         rede.load_state_dict(melhor)
         log.info("checkpoint escolhido: epoca %s (chave %s)", melhor_epoca, melhor_chave)
     caminho = Path(args.saida)
-    gravar_modelo(rede, caminho, args.pessoal, args.pessoal_dados)
+    gravar_modelo(rede, caminho, args.pessoal, dados)
     verificacao = verificar_modelo(caminho)
     log.info("verificacao: %s", json.dumps(verificacao, ensure_ascii=False))
 
@@ -797,6 +801,8 @@ def main() -> None:
         "segundos": round(time.time() - t0, 1),
     }
     destino = saida_dir / f"metricas_{args.variacao}.json"
+    if args.pessoal:
+        _caminho_fora_de_git(destino, "--dados")
     destino.write_text(json.dumps(resumo, indent=1, ensure_ascii=False), encoding="utf-8")
     log.info("metricas em %s", destino)
 
