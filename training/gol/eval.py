@@ -102,6 +102,36 @@ def descobrir_streams(dados: Path) -> list[tuple[str, Path, Path, dict]]:
     return itens
 
 
+def _limites_arquivos(meta: dict, dados: Path, categoria_bruta: str):
+    """Fronteiras (arquivo, inicio, fim) em chunks, quando a ordem e a ordenada.
+
+    O conversor paraleliza por fatias de arquivos: a ordem concatenada e
+    arquivos[0::W], arquivos[1::W], ... Se houver <= 8 fontes e W >= fontes
+    (caso do jogo: 2 videos), a ordem coincide com a lista ordenada.
+    """
+    import soundfile as sf
+
+    nomes = list(meta.get("arquivos", []))
+    if not nomes or len(nomes) > 8:
+        return None
+    raiz = dados / "raw" / categoria_bruta
+    contagens = []
+    for nome in nomes:
+        caminho = raiz / "wav" / nome
+        if not caminho.exists():
+            caminho = raiz / nome
+        if not caminho.exists():
+            return None
+        contagens.append(int(sf.info(str(caminho)).frames) // M.CHUNK)
+    if sum(contagens) != int(meta["chunks"]):
+        return None
+    limites, inicio = [], 0
+    for nome, n in zip(nomes, contagens):
+        limites.append((nome, inicio, inicio + n))
+        inicio += n
+    return limites
+
+
 def avaliar_streams(sessao, dados: Path, limiares: list[float], PortaoGrito) -> dict:
     saida = {}
     itens = descobrir_streams(dados)
@@ -113,12 +143,17 @@ def avaliar_streams(sessao, dados: Path, limiares: list[float], PortaoGrito) -> 
         rms = np.load(rms_p, mmap_mode="r")
         # O conversor paralelo nao registra a ordem da concatenacao dos
         # arquivos; o stream e avaliado como uma sessao continua.
+        limites = _limites_arquivos(meta, dados, bruto) if meta else None
         t0 = time.time()
-        resultado = M.avaliar_stream(sessao, feats, rms, None, limiares, PortaoGrito)
+        resultado = M.avaliar_stream(
+            sessao, feats, rms, None, limiares, PortaoGrito,
+            detalhar=(nome == "jogo"), limites_arquivos=limites,
+        )
         resultado["categoria"] = nome
         resultado["arquivo"] = feat_p.name
         resultado["arquivos"] = int(meta.get("fontes", 0))
         resultado["segundos"] = round(time.time() - t0, 1)
+        resultado["limites_arquivos"] = limites is not None
         saida[nome] = resultado
         log.warning(
             "%s: %.2f h, %d chunks (%.0fs)",
@@ -173,12 +208,14 @@ def avaliar_clipes(modelo, caminhos: list[Path], limiares: list[float],
             limiar: {"sem": {"acertos": 0, "taxa": 0.0}, "com": {"acertos": 0, "taxa": 0.0}}
             for limiar in limiares}}
     notas_max = np.full(len(caminhos), np.nan, dtype=np.float32)
+    notas_ultima = np.full(len(caminhos), np.nan, dtype=np.float32)
     liberado = np.zeros(len(caminhos), dtype=bool)
     t0 = time.time()
     for i, caminho in enumerate(caminhos):
         audio = _int16(caminho)
         notas = notas_do_clipe(modelo, audio)
         notas_max[i] = float(np.max(notas)) if len(notas) else 0.0
+        notas_ultima[i] = float(notas[-1]) if len(notas) else 0.0
         if com_portao and PortaoGrito is not None:
             portao = M.preparar_portao(PortaoGrito)
             liberado[i] = M.portao_libera_grito(portao, float(notas_max[i]))
@@ -189,11 +226,16 @@ def avaliar_clipes(modelo, caminhos: list[Path], limiares: list[float],
     saida = {"clipes": len(caminhos), "segundos": round(time.time() - t0, 1), "por_limiar": {}}
     for limiar in limiares:
         sem = notas_max >= limiar
+        final = notas_ultima >= limiar
         saida["por_limiar"][limiar] = {
             "sem": {"acertos": int(sem.sum()), "taxa": float(sem.mean()) if len(sem) else float("nan")},
             "com": {
                 "acertos": int((sem & liberado).sum()),
                 "taxa": float((sem & liberado).mean()) if len(sem) else float("nan"),
+            },
+            "ultima": {
+                "acertos": int(final.sum()),
+                "taxa": float(final.mean()) if len(final) else float("nan"),
             },
         }
     return saida
@@ -221,6 +263,56 @@ def anotar_gate_negativos(portao, modelo, caminhos: list[Path], limiares: list[f
             "com": {"disparos": liberado},
         }
     return saida
+
+
+def avaliar_features_curtas(sessao, caminho: Path, limiares: list[float], PortaoGrito) -> dict:
+    """Clipes ja convertidos em features (ex.: real_test.npy), uma janela por clipe."""
+    feats = np.load(caminho, mmap_mode="r")
+    if feats.ndim == 3:
+        feats = np.asarray(feats).reshape(-1, feats.shape[-1])
+    notas = M.scores_janelas(sessao, feats)
+    saida = {"clipes": int(len(notas)), "segundos": 0.0, "por_limiar": {}}
+    for limiar in limiares:
+        sem = notas >= limiar
+        saida["por_limiar"][limiar] = {
+            "sem": {"acertos": int(sem.sum()), "taxa": float(sem.mean())},
+            "com": {"acertos": int(sem.sum()), "taxa": float(sem.mean())},
+            "ultima": {"acertos": int(sem.sum()), "taxa": float(sem.mean())},
+        }
+    return saida
+
+
+def videos_treino_real(dados: Path) -> set[str]:
+    """IDs de video que entraram no real_train (para nao avaliar o gol_real neles)."""
+    videos: set[str] = set()
+
+    def coletar(obj):
+        if isinstance(obj, list):
+            for it in obj:
+                coletar(it)
+        elif isinstance(obj, dict):
+            if obj.get("video"):
+                videos.add(str(obj["video"]))
+            for chave in ("itens", "clipes", "real_train"):
+                if chave in obj:
+                    coletar(obj[chave])
+
+    pasta = dados / "work" / "real_train"
+    if pasta.exists():
+        for arq in pasta.rglob("*.json"):
+            try:
+                coletar(json.loads(arq.read_text(encoding="utf-8")))
+            except Exception:  # noqa: BLE001
+                continue
+    man = dados / "MANIFESTO.json"
+    if man.exists():
+        try:
+            m = json.loads(man.read_text(encoding="utf-8"))
+            if "real_train" in m:
+                coletar(m["real_train"])
+        except Exception:  # noqa: BLE001
+            pass
+    return videos
 
 
 def selecionar_clipes(dados: Path, tipo: str | None, limite: int, seed: int = 7) -> list[Path]:
@@ -299,8 +391,11 @@ def _ordem_streams(nomes: list[str]) -> list[str]:
 def tabela_markdown(resultado: dict, limiares: list[float], com_portao: bool) -> str:
     modo = "com" if com_portao else "sem"
     nomes = _ordem_streams(list(resultado["streams"]))
-    cab = ["limiar", "sintetico limpo", "sintetico ruido", "narradores reais", "total",
-           "validation", *nomes, "jogo+musica"]
+    rotulos = {"sintetico_limpo": "sintetico limpo", "sintetico_ruido": "sintetico ruido",
+               "narradores": "narradores reais", "real_teste": "real teste (novo)"}
+    chaves_clipes = [k for k in ("sintetico_limpo", "sintetico_ruido", "narradores", "real_teste")
+                     if k in resultado["clipes"]]
+    cab = ["limiar", *[rotulos[k] for k in chaves_clipes], "total", "validation", *nomes, "jogo+musica"]
     linhas = ["| " + " | ".join(cab) + " |", "|" + "---|" * len(cab)]
     for limiar in limiares:
         c = resultado["clipes"]
@@ -312,10 +407,7 @@ def tabela_markdown(resultado: dict, limiares: list[float], com_portao: bool) ->
         total_txt = f"{100 * acertos / total:.1f}% ({acertos}/{total})" if total else "n/d"
         val = resultado["validacao"]["por_limiar"][limiar][modo]
         val_txt = "n/d" if val is None else _fmt_fa(val)
-        celulas = [
-            f"{limiar:.2f}", acerto("sintetico_limpo"), acerto("sintetico_ruido"), acerto("narradores"),
-            total_txt, val_txt,
-        ]
+        celulas = [f"{limiar:.2f}", *[acerto(k) for k in chaves_clipes], total_txt, val_txt]
         for nome in nomes:
             celulas.append(_fmt_fa(resultado["streams"][nome]["por_limiar"][limiar][modo]))
         celulas.append(_fmt_fa(resultado["jogo_musica"]["por_limiar"][limiar][modo]))
@@ -378,6 +470,28 @@ def markdown_completo(resultado: dict, escolha: dict) -> str:
         f"({streams[n]['horas']:.2f} h)"
         for n in _ordem_streams(list(streams)) if _grupo(n) == "conversa"
     )
+    chaves_clipes = [k for k in ("sintetico_limpo", "sintetico_ruido", "narradores", "real_teste")
+                     if k in c]
+    linhas_janela = []
+    for k in chaves_clipes:
+        item = c[k]["por_limiar"][e["limiar"]]
+        linhas_janela.append(
+            f"| {k} | {100 * item['ultima']['taxa']:.1f}% ({item['ultima']['acertos']}/{c[k]['clipes']}) "
+            f"| {100 * item['com']['taxa']:.1f}% ({item['com']['acertos']}/{c[k]['clipes']}) |"
+        )
+    tabela_janela = "\n".join(linhas_janela)
+    detalhes_jogo = streams.get("jogo", {}).get("detalhes", {}).get(e["limiar"], [])
+    linhas_jogo = [
+        f"| {d.get('arquivo') or 'n/d'} | {d['tempo_arquivo_s'] if d.get('tempo_arquivo_s') is not None else 'n/d'} "
+        f"| {d['tempo_stream_s']:.2f} | {d['score']:.3f} | {d['nivel_db']:.1f} |"
+        for d in detalhes_jogo
+    ]
+    tabela_jogo = "\n".join(linhas_jogo)
+    fila_real = ""
+    real_txt = ""
+    if "real_teste" in c:
+        fila_real = f"| real teste (novo) | {c['real_teste']['clipes']} | `features/real_test.npy` |"
+        real_txt = (f", real teste {100 * c['real_teste']['por_limiar'][e['limiar']]['com']['taxa']:.1f}%")
     texto = f"""# Resultados do `gol_grito`
 
 Gerado por `uv run python eval.py --resumo --markdown RESULTADOS.md` em
@@ -408,6 +522,22 @@ contados; limite superior unilateral de 95% Poisson.
 
 {tabela_markdown(resultado, limiares, com_portao=True)}
 
+### Alinhamento: ultima janela vs maximo por chunk (limiar sugerido)
+
+| conjunto | so a ultima janela | maximo por chunk |
+|---|---|---|
+{tabela_janela}
+
+### Disparos no jogo no limiar sugerido (com portao)
+
+`arquivo` e `tempo no arquivo` so aparecem quando o stream tem <= 8 fontes
+(2 videos no jogo); o tempo no stream sempre aparece. O portao deixa passar
+somente os disparos acima da referencia de fala.
+
+| arquivo | tempo no arquivo (s) | tempo no stream (s) | nota | nivel (dBFS) |
+|---|---|---|---|---|
+{tabela_jogo}
+
 ## Conjuntos
 
 | conjunto | clipes | fonte |
@@ -415,6 +545,7 @@ contados; limite superior unilateral de 95% Poisson.
 | sintetico limpo | {c["sintetico_limpo"]["clipes"]} | pos_test, vozes reservadas (Piper jeff + edge-tts), sem ruido |
 | sintetico ruido | {c["sintetico_ruido"]["clipes"]} | pos_test com ruido de jogo (SNR 0-20 dB) |
 | narradores reais | {c["narradores"]["clipes"]} | `raw/gol_real/clips` (videos publicos, uso local) |
+{fila_real}
 {tabela_conjuntos_streams}
 | validation openWakeWord | {validacao["horas"]:.2f} h | `validation_set_features.npy` |
 | fala normal com "gol" | {resultado["negativos_fala"]["clipes"]} clipes | amostra de `work/neg_train` (tipo fala_normal) |
@@ -426,7 +557,7 @@ contados; limite superior unilateral de 95% Poisson.
   {100 * e["acerto"]:.1f}% — {meta(e["metas"]["acerto"])} a meta de 85%.
   Por conjunto: sintetico limpo {100 * c["sintetico_limpo"]["por_limiar"][e["limiar"]]["com"]["taxa"]:.1f}%,
   sintetico com ruido {100 * c["sintetico_ruido"]["por_limiar"][e["limiar"]]["com"]["taxa"]:.1f}%,
-  narradores reais {100 * c["narradores"]["por_limiar"][e["limiar"]]["com"]["taxa"]:.1f}%.
+  narradores reais {100 * c["narradores"]["por_limiar"][e["limiar"]]["com"]["taxa"]:.1f}%{real_txt}.
 - FA/h observada com portao no limiar sugerido: conversa {e["fa_conversa"]:.2f}
   ({meta(e["metas"]["fa_conversa"])} a meta de 0,5), jogo+musica {e["fa_jogo_musica"]:.2f}
   ({meta(e["metas"]["fa_jogo_musica"])} a meta de 0,2).
@@ -467,6 +598,12 @@ contados; limite superior unilateral de 95% Poisson.
 5. **Alcance.** Os numeros provam vozes sinteticas e narradores reais. **Nao
    provam a voz do Guima**: isso depende do teste ao vivo
    (`tools/grito_ao_vivo.py`, 10 gritos + 2 min de conversa, nada gravado).
+   As metas devem ser conferidas contra o alvo; se nao baterem, o deploy espera
+   a aceitacao ao vivo ou uma ordem explicita do Guima.
+6. **Arquivo e tempo no jogo.** O conversor paralelo nao guarda a ordem da
+   concatenacao. No jogo ha 2 videos e 6 fatias: a ordem concatenada coincide
+   com a lista ordenada, entao `arquivo` e `tempo no arquivo` saem exatos. Para
+   os outros streams (muitos arquivos) a coluna nao se aplica.
 
 ## Modelo e licenca
 
@@ -528,6 +665,11 @@ def main() -> None:
     ruidos = [Path(r["arquivo"]) for r in receitas
               if r["receita"].get("snr_db") is not None and Path(r["arquivo"]).exists()]
     reais = sorted((dados / "raw" / "gol_real" / "clips").glob("*.wav"))
+    vids_treino = videos_treino_real(dados)
+    if vids_treino:
+        antes = len(reais)
+        reais = [p for p in reais if not any(v in p.name for v in vids_treino)]
+        log.warning("gol_real: %d -> %d clipes (videos do real_train fora)", antes, len(reais))
     if not limpos and not ruidos:
         todos = sorted((dados / "work" / "pos_test").glob("*.wav"))
         limpos = todos
@@ -536,6 +678,10 @@ def main() -> None:
         "sintetico_ruido": avaliar_clipes(modelo, ruidos, limiares, PortaoGrito),
         "narradores": avaliar_clipes(modelo, reais, limiares, PortaoGrito),
     }
+    real_test_p = dados / "features" / "real_test.npy"
+    if real_test_p.exists():
+        clipes["real_teste"] = avaliar_features_curtas(sessao, real_test_p, limiares, PortaoGrito)
+        log.warning("real_test: %d clipes de %s", clipes["real_teste"]["clipes"], real_test_p.name)
 
     log.warning("avaliacao: clipes negativos (amostra)")
     neg_fala_dir = selecionar_clipes(dados, "fala_normal", args.max_clipes_neg)

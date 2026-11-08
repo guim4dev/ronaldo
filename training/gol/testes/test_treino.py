@@ -77,6 +77,32 @@ def test_segmentos_do_meta(tmp_path: Path) -> None:
     assert M.segmentos_do_meta(meta2, dados, "game") == [(0, 80)]
 
 
+def test_alinhamento_monta_janelas_da_producao() -> None:
+    import train as T
+
+    # dois clipes de 40 chunks; palavra [20,30) e [25,35) em chunks
+    stream = np.random.default_rng(0).normal(0, 0.2, (80, 96)).astype(np.float16)
+    offsets = np.asarray([0, 40, 80], dtype=np.int64)
+    meta = {"itens": [
+        {"chunks": 40, "inicio_chunk": 20.0, "fim_chunk": 30.0},
+        {"chunks": 40, "inicio_chunk": 25.0, "fim_chunk": 35.0},
+    ]}
+    al = T.PositivosAlinhados(stream, offsets, meta, val_frac=0.5, seed=0)
+    pos0 = al.positivas[0]
+    neg0 = al.negativas[0]
+    # fim da palavra em 2,4 s: positivas de k=29 (fim) a k=35 (fim+0,48 s)
+    assert pos0 == list(range(29, 36)), pos0
+    # antes da palavra: k=15..18
+    assert neg0 == [15, 16, 17, 18], neg0
+    pos1 = al.positivas[1]
+    assert pos1 == list(range(34, 40)), pos1
+    # amostra: 25% de janelas negativas, o resto positivo
+    x, y = al.amostrar(200, np.random.default_rng(1), frac_neg=0.25)
+    assert x.shape == (200, 16, 96) and y.shape == (200,)
+    assert set(np.unique(y)) <= {0.0, 1.0}
+    assert 0.1 < float(np.mean(y == 0)) < 0.45
+
+
 def test_iter_janelas_nao_cruza_segmento() -> None:
     feats = np.arange(100 * 96, dtype=np.float16).reshape(100, 96)
     indices, janelas = [], []

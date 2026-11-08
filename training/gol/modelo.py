@@ -285,6 +285,8 @@ def avaliar_stream(
     PortaoGrito=None,
     acima_db: float = PORTAO_ACIMA_DB,
     bloco_piso_chunks: int = 1500,
+    detalhar: bool = False,
+    limites_arquivos: list[tuple[str, int, int]] | None = None,
 ) -> dict:
     """Disparos por limiar em um stream, com e sem o portao de volume.
 
@@ -329,6 +331,15 @@ def avaliar_stream(
     rms = np.asarray(rms, dtype=np.float32)
     limiares_ord = sorted(limiares, reverse=True)
     estado = {limiar: {"ultimo": None, "contagem": 0} for limiar in limiares}
+    detalhes = {limiar: [] for limiar in limiares}
+
+    def _arquivo_de(chunk: int):
+        if not limites_arquivos:
+            return None, None
+        for nome, ini, fim in limites_arquivos:
+            if ini <= chunk < fim:
+                return nome, round((chunk - ini) * PASSO_S, 2)
+        return None, None
     rms = np.asarray(rms, dtype=np.float32)
     # piso do bloco (percentil 10 do RMS) para o VAD aproximado
     pisos = np.full(len(feats), SILENCIO_DB, dtype=np.float32)
@@ -357,10 +368,22 @@ def avaliar_stream(
                     continue
                 e["ultimo"] = i
                 e["contagem"] += 1
+                if detalhar:
+                    arquivo, tempo_arquivo = _arquivo_de(i)
+                    detalhes[limiar].append({
+                        "chunk": i,
+                        "tempo_stream_s": round(i * PASSO_S, 2),
+                        "arquivo": arquivo,
+                        "tempo_arquivo_s": tempo_arquivo,
+                        "score": round(nota, 4),
+                        "nivel_db": round(db, 2),
+                    })
     for limiar in limiares:
         k = estado[limiar]["contagem"]
         taxa, limite = fa_por_hora(k, horas)
         resultado["por_limiar"][limiar]["com"] = {
             "disparos": k, "fa_h": taxa, "limite95": limite,
         }
+    if detalhar:
+        resultado["detalhes"] = detalhes
     return resultado

@@ -74,6 +74,115 @@ class AmostradorStream:
         return saida
 
 
+# --------------------------------------------------------------------------- #
+# positivos alinhados (janelas que a producao ve)
+# --------------------------------------------------------------------------- #
+class PositivosAlinhados:
+    """Janelas de 16 embeddings com o fim da palavra em varios pontos.
+
+    Regra (do cavaleiro): positiva so quando a palavra inteira (>= 80%) esta
+    dentro da janela e o fim dela cai nos ultimos ~0,5 s da janela. Janelas
+    antes da palavra sao negativas. Janelas parciais ficam de fora.
+
+    A janela k cobre o audio de [(k-15)*0.08 - 0.68, (k+1)*0.08]: o contexto
+    de mel de 76 frames se estende ~0,7 s para tras do primeiro embedding.
+    """
+
+    def __init__(self, stream, offsets, meta: dict, val_frac: float, seed: int):
+        self.stream = stream
+        self.offsets = np.asarray(offsets, dtype=np.int64)
+        itens = meta["itens"]
+        self.chunks = np.asarray([int(it["chunks"]) for it in itens], dtype=np.int64)
+        self.inicio = np.asarray([float(it["inicio_chunk"]) for it in itens], dtype=np.float64)
+        self.fim = np.asarray([float(it["fim_chunk"]) for it in itens], dtype=np.float64)
+        self.positivas: list[list[int]] = []
+        self.negativas: list[list[int]] = []
+        for i in range(len(itens)):
+            inicio_s = self.inicio[i] * M.PASSO_S
+            fim_s = self.fim[i] * M.PASSO_S
+            dur = max(fim_s - inicio_s, 1e-6)
+            pos, neg = [], []
+            for k in range(M.JANELA - 1, int(self.chunks[i])):
+                s0 = (k - (M.JANELA - 1)) * M.PASSO_S - 0.68
+                s1 = (k + 1) * M.PASSO_S
+                if s1 < inicio_s:
+                    neg.append(k)
+                    continue
+                if s1 < fim_s or (s1 - fim_s) > 0.5:
+                    continue
+                cobertura = (min(s1, fim_s) - max(s0, inicio_s)) / dur
+                if cobertura >= 0.8:
+                    pos.append(k)
+            self.positivas.append(pos)
+            self.negativas.append(neg)
+        usaveis = [i for i in range(len(itens)) if self.positivas[i]]
+        ordem = np.random.default_rng(seed).permutation(len(usaveis))
+        n_val = max(1, int(round(len(usaveis) * val_frac)))
+        self.val_idx = [usaveis[j] for j in ordem[:n_val]]
+        self.treino_idx = [usaveis[j] for j in ordem[n_val:]]
+        self.com_pos = [i for i in usaveis]
+        self.com_neg = [i for i in range(len(itens)) if self.negativas[i]]
+        log.info(
+            "alinhado: %d clipes (%d com janela positiva), val=%d, media pos=%.1f neg=%.1f",
+            len(itens), len(usaveis), len(self.val_idx),
+            float(np.mean([len(self.positivas[i]) for i in usaveis])),
+            float(np.mean([len(self.negativas[i]) for i in self.com_neg])),
+        )
+
+    def _janela(self, i: int, k: int) -> np.ndarray:
+        off = int(self.offsets[i])
+        return np.asarray(self.stream[off + k - (M.JANELA - 1) : off + k + 1], dtype=np.float32)
+
+    def amostrar(self, n: int, rng: np.random.Generator, frac_neg: float = 0.25):
+        xs, ys = [], []
+        for _ in range(n):
+            negativo = rng.random() < frac_neg
+            if negativo and self.com_neg:
+                i = self.com_neg[int(rng.integers(0, len(self.com_neg)))]
+                ks = self.negativas[i]
+                # prefere as janelas logo antes da palavra (mais dificeis)
+                k = ks[max(0, len(ks) - 1 - int(rng.integers(0, min(5, len(ks)))))]
+                ys.append(0.0)
+            else:
+                i = self.treino_idx[int(rng.integers(0, len(self.treino_idx)))]
+                ks = self.positivas[i]
+                k = ks[int(rng.integers(0, len(ks)))]
+                ys.append(1.0)
+            xs.append(self._janela(i, k))
+        return np.asarray(xs, dtype=np.float32), np.asarray(ys, dtype=np.float32)
+
+    def scores_val(self, rede, lote: int = 8192) -> tuple[np.ndarray, np.ndarray]:
+        """Max por chunk e ultima janela de cada clipe de validacao (torch)."""
+        import torch
+
+        maximo = np.zeros(len(self.val_idx), dtype=np.float32)
+        ultima = np.zeros(len(self.val_idx), dtype=np.float32)
+        pendentes, donos, tipos = [], [], []
+        rede.eval()
+
+        def drenar():
+            if not pendentes:
+                return
+            with torch.no_grad():
+                notas = rede(torch.from_numpy(np.asarray(pendentes, dtype=np.float32))).numpy().reshape(-1)
+            for d, t, nota in zip(donos, tipos, notas):
+                if t == "max":
+                    maximo[d] = max(maximo[d], float(nota))
+                else:
+                    ultima[d] = float(nota)
+            pendentes.clear(); donos.clear(); tipos.clear()
+
+        for j, i in enumerate(self.val_idx):
+            for k in range(M.JANELA - 1, int(self.chunks[i])):
+                pendentes.append(self._janela(i, k)); donos.append(j); tipos.append("max")
+                if len(pendentes) >= lote:
+                    drenar()
+            pendentes.append(self._janela(i, int(self.chunks[i]) - 1))
+            donos.append(j); tipos.append("ultima")
+        drenar()
+        return maximo, ultima
+
+
 def _carregar_vetor(caminho: Path, mmap: bool = True) -> np.ndarray:
     if not caminho.exists():
         raise SystemExit(f"falta {caminho} (ver DADOS.md; espere o MANIFESTO.json)")
@@ -82,10 +191,26 @@ def _carregar_vetor(caminho: Path, mmap: bool = True) -> np.ndarray:
 
 def carregar_dados(dados: Path, val_frac: float, seed: int) -> dict:
     feat = dados / "features"
-    pos = _carregar_vetor(feat / "pos_train.npy")
+    alinhado = None
+    pos = None
+    stream_p = feat / "pos_v2_stream.npy"
+    offsets_p = feat / "pos_v2_offsets.npy"
+    meta_p = feat / "pos_v2_meta.json"
+    if stream_p.exists() and offsets_p.exists() and meta_p.exists():
+        alinhado = PositivosAlinhados(
+            np.load(stream_p, mmap_mode="r"), np.load(offsets_p),
+            json.loads(meta_p.read_text(encoding="utf-8")), val_frac, seed,
+        )
+    else:
+        pos = _carregar_vetor(feat / "pos_train.npy")
     neg = _carregar_vetor(feat / "neg_train.npy")
     acav = _carregar_vetor(dados / "raw" / "openwakeword" / ACAV_NOME)
     val = _carregar_vetor(dados / "raw" / "openwakeword" / VAL_NOME)
+    game_hard = None
+    hard_p = dados / "treino" / "game_hard.npy"
+    if hard_p.exists():
+        game_hard = np.load(hard_p, mmap_mode="r")
+        log.info("negativos dificeis de jogo: %s", game_hard.shape)
 
     streams_treino = []
     for categoria in CATEGORIAS:
@@ -98,18 +223,24 @@ def carregar_dados(dados: Path, val_frac: float, seed: int) -> dict:
         streams_treino.append(AmostradorStream(feats, segmentos, categoria))
         log.info("stream treino %s: %d chunks, %d arquivos", categoria, len(feats), len(segmentos))
 
-    n_val = max(1, int(round(len(pos) * val_frac)))
-    ordem = np.random.default_rng(seed).permutation(len(pos))
-    val_idx = np.sort(ordem[:n_val])
-    treino_idx = np.sort(ordem[n_val:])
+    if alinhado is not None:
+        pos_treino = np.zeros(0, dtype=np.int64)
+        pos_val = np.zeros(0, dtype=np.int64)
+    else:
+        n_val = max(1, int(round(len(pos) * val_frac)))
+        ordem = np.random.default_rng(seed).permutation(len(pos))
+        pos_val = np.sort(ordem[:n_val])
+        pos_treino = np.sort(ordem[n_val:])
     return {
         "pos": pos,
+        "alinhado": alinhado,
         "neg": neg,
         "acav": acav,
         "val": val,
         "streams": streams_treino,
-        "pos_treino": treino_idx,
-        "pos_val": val_idx,
+        "game_hard": game_hard,
+        "pos_treino": pos_treino,
+        "pos_val": pos_val,
     }
 
 
@@ -170,24 +301,32 @@ def _linhas_mmap(arr, indices: np.ndarray) -> np.ndarray:
     return saida
 
 
-def montar_lote(d: dict, args, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    pos_idx = rng.choice(d["pos_treino"], size=args.lote_pos, replace=True)
+def montar_lote(d: dict, args, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
+    partes_x, partes_y = [], []
+    if d["alinhado"] is not None:
+        x_pos, y_pos = d["alinhado"].amostrar(args.lote_pos, rng, args.frac_janela_negativa)
+        partes_x.append(x_pos); partes_y.append(y_pos)
+    else:
+        pos_idx = rng.choice(d["pos_treino"], size=args.lote_pos, replace=True)
+        partes_x.append(_linhas_mmap(d["pos"], pos_idx))
+        partes_y.append(np.ones(args.lote_pos, np.float32))
     neg_idx = rng.choice(len(d["neg"]), size=args.lote_neg, replace=True)
     acav_idx = rng.integers(0, len(d["acav"]), size=args.lote_acav)
-    partes = [
-        _linhas_mmap(d["pos"], pos_idx),
-        _linhas_mmap(d["neg"], neg_idx),
-        _linhas_mmap(d["acav"], acav_idx),
-    ]
+    partes_x.append(_linhas_mmap(d["neg"], neg_idx))
+    partes_x.append(_linhas_mmap(d["acav"], acav_idx))
+    partes_y.append(np.zeros(args.lote_neg, np.float32))
+    partes_y.append(np.zeros(args.lote_acav, np.float32))
+    if d.get("game_hard") is not None and args.lote_game_hard > 0:
+        hard_idx = rng.integers(0, len(d["game_hard"]), size=args.lote_game_hard)
+        partes_x.append(_linhas_mmap(d["game_hard"], hard_idx))
+        partes_y.append(np.zeros(args.lote_game_hard, np.float32))
     por_stream = max(1, args.lote_stream // max(1, len(d["streams"])))
     for amostrador in d["streams"]:
-        partes.append(amostrador.amostrar(por_stream, rng))
-    x = np.concatenate(partes, axis=0)
-    n_pos = args.lote_pos
-    n_neg = len(x) - n_pos
-    y = np.concatenate([np.ones(n_pos, np.float32), np.zeros(n_neg, np.float32)])
-    w = np.ones(len(x), dtype=np.float32)
-    return x, y, w
+        partes_x.append(amostrador.amostrar(por_stream, rng))
+        partes_y.append(np.zeros(por_stream, np.float32))
+    x = np.concatenate(partes_x, axis=0)
+    y = np.concatenate(partes_y).astype(np.float32)
+    return x, y
 
 
 # --------------------------------------------------------------------------- #
@@ -213,18 +352,23 @@ def scores_janelas_torch(rede, feats, lote: int = 8192) -> tuple[np.ndarray, np.
 def metricas_validacao(rede, d: dict, limiares: list[float]) -> dict:
     import torch
 
-    pos_val = np.asarray(d["pos"][d["pos_val"]], dtype=np.float32)
     rede.eval()
-    with torch.no_grad():
-        pos_scores = rede(torch.from_numpy(pos_val)).numpy().reshape(-1)
+    ultima = None
+    if d["alinhado"] is not None:
+        pos_scores, ultima = d["alinhado"].scores_val(rede)
+    else:
+        pos_val = np.asarray(d["pos"][d["pos_val"]], dtype=np.float32)
+        with torch.no_grad():
+            pos_scores = rede(torch.from_numpy(pos_val)).numpy().reshape(-1)
     val_feats = d["val"]
     indices, scores = scores_janelas_torch(rede, val_feats)
     horas = len(indices) * M.PASSO_S / 3600.0
     saida = {
         "val_horas": round(horas, 3),
         "val_chunks": int(len(indices)),
-        "pos_val": int(len(pos_val)),
+        "pos_val": int(len(pos_scores)),
         "recall": {},
+        "recall_ultima_janela": {},
         "fa_h": {},
         "fa_limite95": {},
     }
@@ -232,6 +376,8 @@ def metricas_validacao(rede, d: dict, limiares: list[float]) -> dict:
         disparos = M.contar_disparos(indices, scores, limiar)
         taxa, limite = M.fa_por_hora(len(disparos), horas)
         saida["recall"][limiar] = float(np.mean(pos_scores >= limiar))
+        if ultima is not None:
+            saida["recall_ultima_janela"][limiar] = float(np.mean(ultima >= limiar))
         saida["fa_h"][limiar] = float(taxa)
         saida["fa_limite95"][limiar] = float(limite)
     return saida
@@ -311,6 +457,10 @@ def main() -> None:
     ap.add_argument("--epocas", type=int, default=24)
     ap.add_argument("--passos-por-epoca", type=int, default=0, help="0 = len(pos_treino)//lote_pos")
     ap.add_argument("--lote-pos", type=int, default=64)
+    ap.add_argument("--frac-janela-negativa", type=float, default=0.25,
+                    help="fracao do lote de positivos alinhados que vira janela antes da palavra")
+    ap.add_argument("--lote-game-hard", type=int, default=128,
+                    help="negativos dificeis minerados do stream de treino de jogo")
     ap.add_argument("--lote-neg", type=int, default=64)
     ap.add_argument("--lote-acav", type=int, default=512)
     ap.add_argument("--lote-stream", type=int, default=256)
@@ -348,11 +498,15 @@ def main() -> None:
     rng = np.random.default_rng(args.seed)
 
     d = carregar_dados(dados, args.val_frac, args.seed)
+    n_treino = (len(d["alinhado"].treino_idx) if d["alinhado"] is not None
+                else len(d["pos_treino"]))
+    n_val = len(d["alinhado"].val_idx) if d["alinhado"] is not None else len(d["pos_val"])
     log.info(
-        "dados: pos_treino=%d pos_val=%d neg=%d acav=%d val_chunks=%d",
-        len(d["pos_treino"]), len(d["pos_val"]), len(d["neg"]), len(d["acav"]), len(d["val"]),
+        "dados: pos_treino=%d pos_val=%d neg=%d acav=%d val_chunks=%d game_hard=%s",
+        n_treino, n_val, len(d["neg"]), len(d["acav"]), len(d["val"]),
+        None if d.get("game_hard") is None else len(d["game_hard"]),
     )
-    passos = args.passos_por_epoca or max(1, len(d["pos_treino"]) // args.lote_pos)
+    passos = args.passos_por_epoca or max(1, n_treino // args.lote_pos)
     total_passos = args.epocas * passos
 
     rede = criar_rede(args.camada, args.blocos)
@@ -380,8 +534,8 @@ def main() -> None:
             if args.agenda_lr == "cosine":
                 for grupo in otimizador.param_groups:
                     grupo["lr"] = _lr_cosine(passo_global, total_passos, args.lr)
-            x, y, w = montar_lote(d, args, rng)
-            w[args.lote_pos :] = peso_neg
+            x, y = montar_lote(d, args, rng)
+            w = np.where(y == 1, 1.0, peso_neg).astype(np.float32)
             xt = torch.from_numpy(x)
             yt = torch.from_numpy(y)
             wt = torch.from_numpy(w)
@@ -407,8 +561,9 @@ def main() -> None:
         historico.append(metrica)
         chave = chave_escolha(metrica, 0.5, args.fa_max_checkpoint)
         log.info(
-            "epoca %d/%d perda=%.4f recall@0.5=%.3f FA/h@0.5=%.3f (lim95 %.3f) peso_neg=%.0f [%.0fs]",
+            "epoca %d/%d perda=%.4f recall@0.5=%.3f ultima=%.3f FA/h@0.5=%.3f (lim95 %.3f) peso_neg=%.0f [%.0fs]",
             epoca, args.epocas, metrica["perda"], metrica["recall"][0.5],
+            metrica.get("recall_ultima_janela", {}).get(0.5, float("nan")),
             metrica["fa_h"][0.5], metrica["fa_limite95"][0.5], peso_neg, time.time() - t0,
         )
         if melhor_chave is None or chave > melhor_chave:
