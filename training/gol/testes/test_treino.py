@@ -117,6 +117,46 @@ def test_repo_nao_rastreia_arquivos_de_audio() -> None:
     assert not audios, f"arquivos de áudio rastreados: {audios}"
 
 
+def test_treino_generico_recusa_dados_com_marcador_privado(tmp_path: Path) -> None:
+    dados = tmp_path / "dados"
+    dados.mkdir()
+    (dados / ".privado").touch()
+    saida = tmp_path / "modelo.onnx"
+    comando = [sys.executable, str(GOL / "train.py"), "--dados", str(dados), "--saida", str(saida)]
+    r = subprocess.run(comando, capture_output=True, text=True, timeout=30)
+    assert r.returncode != 0
+    assert "marcador privado" in r.stderr
+    assert not saida.exists()
+
+
+def test_fonte_sob_diretorio_com_marcador_privado_e_recusada(tmp_path: Path) -> None:
+    import train as T
+
+    privado = tmp_path / "privado"
+    (privado / "features").mkdir(parents=True)
+    (privado / ".privado").touch()
+    with pytest.raises(SystemExit, match="marcador privado"):
+        T.validar_fonte_publica(privado / "features" / "real_train.npy")
+
+
+def test_symlink_de_fonte_para_pasta_privada_e_recusado(tmp_path: Path) -> None:
+    import train as T
+
+    privado = tmp_path / "privado"
+    privado.mkdir()
+    (privado / ".privado").touch()
+    link = tmp_path / "fonte"
+    link.symlink_to(privado, target_is_directory=True)
+    with pytest.raises(SystemExit, match="marcador privado"):
+        T.validar_fonte_publica(link / "features.npy")
+
+
+def test_dados_sem_marcador_privado_passam(tmp_path: Path) -> None:
+    import train as T
+
+    T.validar_fontes_publicas(tmp_path / "dados-publicos")
+
+
 def test_limite_poisson_zero_alarmes() -> None:
     # 0 alarmes em 16 h -> ~3/T = 0,1875/h (o limite que o relatorio cita)
     assert abs(M.limite_poisson(0, 16.0) - 3.0 / 16.0) < 1e-9
