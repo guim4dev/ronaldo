@@ -5,7 +5,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 APP="$HOME/Applications/Ronaldo.app"
-LABEL="dev.guima.ronaldo"
+LABEL="${RONALDO_LABEL:-io.github.ronaldo}"  # o instalador de quem empacota o Ronaldo pode fixar outro
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 LOG="$HOME/Library/Logs/ronaldo.log"
 HEX="/Applications/Hex.app/Contents/MacOS/hex"

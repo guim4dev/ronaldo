@@ -43,10 +43,10 @@ def test_essencial_tira_url_solta_e_citacao_markdown():
 
 
 def test_essencial_tira_token_e_caminhos_longos():
-    texto = "⟦c:abc123⟧ está em /Users/guima/Projects/Personal/ronaldo e em src/ronaldo/agent.py."
+    texto = "⟦c:abc123⟧ está em /home/ana/Projects/ronaldo e em src/ronaldo/agent.py."
     saida = voz.essencial(texto)
     assert "⟦" not in saida and "abc123" not in saida
-    assert "/Users" not in saida and "src/ronaldo" not in saida
+    assert "/home" not in saida and "src/ronaldo" not in saida
     assert saida.startswith("está em")
 
 
@@ -102,7 +102,7 @@ def test_estado_ligado_desligado_no_arquivo(tmp_path):
         ("qual o modo voz do ronaldo", None),
         ("modo voz agora mesmo por favor", None),
         ("", None),
-        # frases reais do Guima (2026-11-07) e variações pedidas
+        # variações reais e frases parecidas que não são comando
         ("Ligar modo TTS", "ligar"),
         ("Ronaldo, liga o modo fala.", "ligar"),
         ("ativar modo tts", "ligar"),
@@ -112,8 +112,8 @@ def test_estado_ligado_desligado_no_arquivo(tmp_path):
         ("desliga o modo fala", "desligar"),
         ("desativar modo voz", "desligar"),
         ("Desliga a voz!", "desligar"),
-        ("O modo fala tá ligado?", None),  # pergunta, não comando: vai pro rei
-        ("liga a voz do rei agora por favor", None),  # mais de 5 palavras
+        ("O modo fala tá ligado?", None),  # pergunta, não comando: vai pro agente
+        ("liga a voz do agente agora por favor", None),  # mais de 5 palavras
         ("modo tts é bom", None),
     ],
 )
@@ -128,12 +128,37 @@ def test_config_padrao_e_arquivo(tmp_path):
     cfg = voz.VozConfig.load(tmp_path / "nao-existe.toml")
     assert cfg.motores == ["say:Luciana"]
     assert cfg.volume == 0.3
+    assert cfg.enviar == [] and cfg.resposta == []
+    assert cfg.enviado == "Enviado."
+    assert cfg.ligado == "As respostas vão ser faladas."
 
     arquivo = tmp_path / "config.toml"
-    arquivo.write_text('[voz]\nmotores = ["wyoming://omarchy:10201#kokoro:pm_alex", "say:Faber"]\nvolume = 0.15\n')
+    arquivo.write_text(
+        '[voz]\n'
+        'motores = ["wyoming://servidor:10201#voz-a", "say:Faber"]\n'
+        'volume = 0.15\n'
+        'enviar = ["/mock/agente", "ask", "--id", "{id}", "--json", "--", "{text}"]\n'
+        'resposta = ["/mock/agente", "status", "--canal", "{canal}", "{id}", "--json"]\n'
+        'enviado = "Enviado ({canal})."\n'
+        'ligado = "As respostas vão ser faladas."\n'
+    )
     cfg = voz.VozConfig.load(arquivo)
-    assert cfg.motores == ["wyoming://omarchy:10201#kokoro:pm_alex", "say:Faber"]
+    assert cfg.motores == ["wyoming://servidor:10201#voz-a", "say:Faber"]
     assert cfg.volume == 0.15
+    assert cfg.enviar == ["/mock/agente", "ask", "--id", "{id}", "--json", "--", "{text}"]
+    assert cfg.resposta == ["/mock/agente", "status", "--canal", "{canal}", "{id}", "--json"]
+    assert cfg.enviado == "Enviado ({canal})."
+    assert cfg.ligado == "As respostas vão ser faladas."
+
+
+def test_config_ignora_campos_invalidos(tmp_path):
+    arquivo = tmp_path / "config.toml"
+    arquivo.write_text('[voz]\nenviar = "nao-e-lista"\nresposta = []\nenviado = 3\nligado = "  "\nvolume = true\n')
+    cfg = voz.VozConfig.load(arquivo)
+    assert cfg.enviar == [] and cfg.resposta == []
+    assert cfg.enviado == "Enviado."
+    assert cfg.ligado == "As respostas vão ser faladas."
+    assert cfg.volume == 0.3
 
 
 # ---------------------------------------------------------------- motores
@@ -188,7 +213,7 @@ def test_player_toca_com_o_volume_pedido(monkeypatch):
 
 
 def test_parse_wyoming_aceita_voz_com_dois_pontos():
-    assert voz._parse_wyoming("wyoming://omarchy:10201#kokoro:pm_alex") == ("omarchy", 10201, "kokoro:pm_alex")
+    assert voz._parse_wyoming("wyoming://servidor:10201#kokoro:voz-a") == ("servidor", 10201, "kokoro:voz-a")
 
 
 def test_cadeia_pula_motor_que_falha_ou_estoura(monkeypatch, tmp_path):
@@ -210,11 +235,11 @@ def test_cadeia_pula_motor_que_falha_ou_estoura(monkeypatch, tmp_path):
 
     assert voz.falar_texto(
         "oi",
-        motores=["wyoming://omarchy:10201#kokoro:pm_alex", "say:Luciana"],
+        motores=["wyoming://servidor:10201#kokoro:voz-a", "say:Luciana"],
         volume=0.2,
         player=player,
     )
-    assert ordem == [("wyoming", "omarchy", 10201, "kokoro:pm_alex"), ("say", "Luciana")]
+    assert ordem == [("wyoming", "servidor", 10201, "kokoro:voz-a"), ("say", "Luciana")]
     assert player.plays == [(str(audio), 0.2)]
     assert not audio.exists()  # temporário apagado depois de tocar
 
@@ -289,13 +314,13 @@ def test_cliente_wyoming_sintetiza_com_servidor_falso():
     assert servidor.ready.wait(5)
     caminho = None
     try:
-        caminho = voz._sintetizar_wyoming("olá rei", "127.0.0.1", servidor.port, "kokoro:pm_alex", timeout=3)
+        caminho = voz._sintetizar_wyoming("olá mundo", "127.0.0.1", servidor.port, "kokoro:voz-a", timeout=3)
         assert caminho
         with wave.open(caminho) as wav:
             assert (wav.getnchannels(), wav.getsampwidth(), wav.getframerate()) == (1, 2, 16000)
             assert wav.getnframes() == 32
-        assert servidor.recebidos[0].text == "olá rei"
-        assert servidor.recebidos[0].voice.name == "kokoro:pm_alex"
+        assert servidor.recebidos[0].text == "olá mundo"
+        assert servidor.recebidos[0].voice.name == "kokoro:voz-a"
     finally:
         if caminho:
             os.unlink(caminho)
@@ -337,8 +362,8 @@ def _falador(tmp_path, respostas, falas, *, quando=None, **kwargs):
     voz.ligar(estado)
     consultas = []
 
-    def consultar(id, reino):
-        consultas.append((id, reino))
+    def consultar(id, contexto):
+        consultas.append((id, contexto))
         return respostas[id]
 
     def falar(texto, em=None):
@@ -367,7 +392,7 @@ def test_falador_so_fala_pronta_com_texto(tmp_path):
     falas = []
     f = _falador(tmp_path, respostas, falas)
     for id in respostas:
-        f.enfileirar("pessoal", id)
+        f.enfileirar(id, {"canal": "casa"})
     f.passo()
     assert falas == []
 
@@ -379,8 +404,8 @@ def test_falador_fala_na_ordem_em_que_ficam_prontas(tmp_path):
     }
     falas = []
     f = _falador(tmp_path, respostas, falas)
-    f.enfileirar("pessoal", "a")
-    f.enfileirar("pessoal", "b")
+    f.enfileirar("a", {"canal": "casa"})
+    f.enfileirar("b", {"canal": "casa"})
 
     respostas["b"] = {"estado": "pronta", "texto": "B primeiro", "em": 1.0}
     f.passo()
@@ -396,8 +421,8 @@ def test_falador_varias_prontas_no_mesmo_ciclo_seguem_a_fila(tmp_path):
     }
     falas = []
     f = _falador(tmp_path, respostas, falas)
-    f.enfileirar("pessoal", "a")
-    f.enfileirar("pessoal", "b")
+    f.enfileirar("a", {"canal": "casa"})
+    f.enfileirar("b", {"canal": "casa"})
     f.passo()
     assert falas == ["A", "B"]
 
@@ -406,7 +431,7 @@ def test_falador_nao_repete_nem_depois_de_reiniciar(tmp_path):
     respostas = {"a": {"estado": "pronta", "texto": "uma vez", "em": 1.0}}
     falas = []
     f = _falador(tmp_path, respostas, falas)
-    f.enfileirar("pessoal", "a")
+    f.enfileirar("a", {"canal": "casa"})
     f.passo()
     assert falas == ["uma vez"]
 
@@ -416,7 +441,7 @@ def test_falador_nao_repete_nem_depois_de_reiniciar(tmp_path):
 
     falas2 = []
     f2 = _falador(tmp_path, respostas, falas2)
-    assert f2.enfileirar("pessoal", "a") is False
+    assert f2.enfileirar("a", {"canal": "casa"}) is False
     f2.passo()
     assert falas2 == []
 
@@ -425,7 +450,7 @@ def test_falador_descarta_item_vencido(tmp_path):
     respostas = {"a": {"estado": "pronta", "texto": "tarde", "em": 1.0}}
     falas = []
     f = _falador(tmp_path, respostas, falas, relogio=lambda: 100.0, prazo=10.0)
-    f.enfileirar("pessoal", "a", quando=0.0)
+    f.enfileirar("a", {"canal": "casa"}, quando=0.0)
     f.passo()
     assert f.pendentes() == []
     assert f.consultas == []
@@ -436,7 +461,7 @@ def test_falador_nao_fala_enquanto_grava(tmp_path):
     respostas = {"a": {"estado": "pronta", "texto": "espera", "em": 1.0}}
     falas = []
     f = _falador(tmp_path, respostas, falas)
-    f.enfileirar("pessoal", "a")
+    f.enfileirar("a", {"canal": "casa"})
     voz.marcar_gravando(True)
     try:
         f.passo()
@@ -459,13 +484,13 @@ def test_falador_parar_mata_o_audio_e_nao_repete(tmp_path):
         return False
 
     f = voz.Falador(
-        consultar=lambda id, reino: respostas[id],
+        consultar=lambda id, contexto: respostas[id],
         falar=falar,
         estado=estado,
         falados=tmp_path / "falados.json",
         automatico=False,
     )
-    f.enfileirar("pessoal", "a", quando=f.relogio())
+    f.enfileirar("a", {"canal": "casa"}, quando=f.relogio())
     thread = threading.Thread(target=f.passo)
     thread.start()
     assert comecou.wait(2)
@@ -479,13 +504,13 @@ def test_falador_parar_mata_o_audio_e_nao_repete(tmp_path):
 
     falas = []
     f2 = voz.Falador(
-        consultar=lambda id, reino: respostas[id],
+        consultar=lambda id, contexto: respostas[id],
         falar=lambda texto, em=None: falas.append(texto) or True,
         estado=estado,
         falados=tmp_path / "falados.json",
         automatico=False,
     )
-    assert f2.enfileirar("pessoal", "a") is False
+    assert f2.enfileirar("a", {"canal": "casa"}) is False
     f2.passo()
     assert falas == []
 
@@ -531,7 +556,7 @@ def test_falador_desligado_para_a_fala_e_esvazia_a_fila(tmp_path):
         return False
 
     f = voz.Falador(
-        consultar=lambda id, reino: respostas[id],
+        consultar=lambda id, contexto: respostas[id],
         falar=falar,
         estado=estado,
         falados=tmp_path / "falados.json",
@@ -539,8 +564,8 @@ def test_falador_desligado_para_a_fala_e_esvazia_a_fila(tmp_path):
         automatico=True,
     )
     try:
-        f.enfileirar("pessoal", "a", quando=f.relogio())
-        f.enfileirar("pessoal", "b", quando=f.relogio())
+        f.enfileirar("a", {"canal": "casa"}, quando=f.relogio())
+        f.enfileirar("b", {"canal": "casa"}, quando=f.relogio())
         assert comecou.wait(3)
         voz.desligar(estado)
         limite = time.monotonic() + 3
@@ -558,7 +583,7 @@ def test_falador_gravando_impede_nova_fala(tmp_path):
     respostas = {"a": {"estado": "pronta", "texto": "A", "em": 1.0}}
     falas = []
     f = _falador(tmp_path, respostas, falas, gravando_fn=lambda: True)
-    f.enfileirar("pessoal", "a")
+    f.enfileirar("a", {"canal": "casa"})
     f.passo()
     assert falas == []
 
@@ -570,22 +595,36 @@ def _proc(rc=0, stdout="", stderr=""):
     return subprocess.CompletedProcess([], rc, stdout, stderr)
 
 
-def test_agent_modo_voz_liga_fala_e_nao_chama_o_rei(monkeypatch):
+def _config_voz(tmp_path, monkeypatch, *, enviar=None, resposta=None, enviado="Enviado."):
+    enviar = enviar or ["/mock/agente", "ask", "--id", "{id}", "--json", "--", "{text}"]
+    resposta = resposta or ["/mock/agente", "status", "--canal", "{canal}", "{id}", "--json"]
+    arquivo = tmp_path / "config.toml"
+    arquivo.write_text(
+        "[voz]\n"
+        f"enviar = {json.dumps(enviar)}\n"
+        f"resposta = {json.dumps(resposta)}\n"
+        f"enviado = {json.dumps(enviado)}\n"
+    )
+    monkeypatch.setattr(voz, "CONFIG", arquivo)
+    return arquivo
+
+
+def test_agent_modo_voz_liga_fala_e_nao_chama_o_envio(monkeypatch):
     chamadas = []
     monkeypatch.setattr(voz, "ligar", lambda: chamadas.append("ligar"))
     monkeypatch.setattr(voz, "falar_agora", lambda texto: chamadas.append(("falar", texto)) or True)
 
     def proibido(*args, **kwargs):
-        raise AssertionError("não devia chamar o comando do rei")
+        raise AssertionError("não devia chamar o envio")
 
     monkeypatch.setattr(agent.subprocess, "run", proibido)
     ok, reply = agent.run(
-        ["corte", "falar", "{text}"],
+        ["/mock/agente", "ask", "{text}"],
         "Ronaldo, liga o modo voz!",
         path="/bin",
         timeout=10,
         notify_reply=False,
-        name="rei",
+        name="agente",
         voz=True,
     )
     assert ok and reply == "Modo voz ligado."
@@ -596,14 +635,14 @@ def test_agent_modo_texto_desliga_sem_falar(monkeypatch):
     chamadas = []
     monkeypatch.setattr(voz, "desligar", lambda: chamadas.append("desligar"))
     monkeypatch.setattr(voz, "falar_agora", lambda texto: chamadas.append(("falar", texto)) or True)
-    monkeypatch.setattr(agent.subprocess, "run", lambda *a, **k: pytest.fail("não devia chamar o rei"))
+    monkeypatch.setattr(agent.subprocess, "run", lambda *a, **k: pytest.fail("não devia chamar o envio"))
     ok, reply = agent.run(
-        ["corte", "falar", "{text}"],
+        ["/mock/agente", "ask", "{text}"],
         "modo texto",
         path="/bin",
         timeout=10,
         notify_reply=False,
-        name="rei",
+        name="agente",
         voz=True,
     )
     assert ok and reply == "Modo texto."
@@ -619,16 +658,16 @@ def test_agent_sem_rota_de_voz_ignora_os_comandos(monkeypatch):
 
     monkeypatch.setattr(agent.subprocess, "run", fake_run)
     ok, _ = agent.run(
-        ["corte", "falar", "{text}"],
+        ["/mock/agente", "ask", "{text}"],
         "modo voz",
         path="/bin",
         timeout=10,
         notify_reply=False,
-        name="rei",
+        name="agente",
         voz=False,
     )
     assert ok
-    assert chamadas == [["corte", "falar", "modo voz"]]
+    assert chamadas == [["/mock/agente", "ask", "modo voz"]]
 
 
 def test_agent_modo_desligado_mantem_o_comando_de_hoje(monkeypatch):
@@ -641,85 +680,123 @@ def test_agent_modo_desligado_mantem_o_comando_de_hoje(monkeypatch):
 
     monkeypatch.setattr(agent.subprocess, "run", fake_run)
     ok, _ = agent.run(
-        ["/Users/guima/.local/bin/corte", "falar", "{text}"],
+        ["/mock/agente", "ask", "{text}"],
         "pergunta",
         path="/bin",
         timeout=10,
         notify_reply=False,
-        name="rei",
+        name="agente",
         voz=True,
     )
     assert ok
-    assert chamadas == [["/Users/guima/.local/bin/corte", "falar", "pergunta"]]
+    assert chamadas == [["/mock/agente", "ask", "pergunta"]]
 
 
-def test_agent_modo_voz_ligado_monta_argv_e_enfileira(monkeypatch):
+def test_agent_modo_voz_ligado_monta_argv_e_enfileira(tmp_path, monkeypatch):
+    _config_voz(tmp_path, monkeypatch, enviado="Enviado ({canal}).")
     chamadas = []
     monkeypatch.setattr(voz, "ligado", lambda: True)
-    monkeypatch.setattr(voz, "enfileirar", lambda reino, id, quando=None: chamadas.append((reino, id)) or True)
+    monkeypatch.setattr(voz, "enfileirar", lambda id, contexto, quando=None: chamadas.append((id, contexto)) or True)
 
     def fake_run(argv, **kwargs):
         chamadas.append(list(argv))
-        return _proc(0, json.dumps({"ok": True, "reino": "pessoal", "id": argv[3]}))
+        return _proc(0, json.dumps({"ok": True, "canal": "casa"}))
 
     monkeypatch.setattr(agent.subprocess, "run", fake_run)
     ok, reply = agent.run(
-        ["/Users/guima/.local/bin/corte", "falar", "{text}"],
+        ["/mock/agente", "ask", "{text}"],
         "qual é a boa?",
         path="/bin",
         timeout=10,
         notify_reply=False,
-        name="rei",
+        name="agente",
         voz=True,
     )
     argv = chamadas[0]
-    oid = argv[3]
-    assert argv[:3] == ["/Users/guima/.local/bin/corte", "falar", "--id"]
+    oid = argv[argv.index("--id") + 1]
+    assert argv == ["/mock/agente", "ask", "--id", oid, "--json", "--", "qual é a boa?"]
     assert len(oid) == 32 and int(oid, 16) >= 0
-    assert argv[4:] == ["--json", "--", "qual é a boa?"]
-    assert chamadas[1] == ("pessoal", oid)
-    assert ok and "pessoal" in reply
+    assert chamadas[1] == (oid, {"id": oid, "canal": "casa"})
+    assert ok and reply == "Enviado (casa)."
+
+
+def test_agent_envio_sem_texto_manda_pelo_stdin(tmp_path, monkeypatch):
+    _config_voz(tmp_path, monkeypatch, enviar=["/mock/agente", "ask", "--id", "{id}", "--json"])
+    visto = {}
+    monkeypatch.setattr(voz, "ligado", lambda: True)
+    monkeypatch.setattr(voz, "enfileirar", lambda *a, **k: True)
+
+    def fake_run(argv, **kwargs):
+        visto["argv"] = argv
+        visto["input"] = kwargs.get("input")
+        return _proc(0, json.dumps({"ok": True, "canal": "casa"}))
+
+    monkeypatch.setattr(agent.subprocess, "run", fake_run)
+    assert agent.run(["/mock/agente"], "no stdin", path="/bin", timeout=10, notify_reply=False, name="agente", voz=True)[0]
+    assert visto["argv"][:3] == ["/mock/agente", "ask", "--id"]
+    assert visto["input"] == "no stdin"
 
 
 def test_atalho_continua_vencendo_o_modo_voz(monkeypatch):
     enfileirados = []
     monkeypatch.setattr(voz, "ligado", lambda: True)
     monkeypatch.setattr(voz, "enfileirar", lambda *a, **k: enfileirados.append(a) or True)
-    monkeypatch.setattr("ronaldo.atalhos.entregar_terminal", lambda *a, **k: ("entregue", "Entregue ao batuqueiro."))
-    monkeypatch.setattr(agent.subprocess, "run", lambda *a, **k: pytest.fail("não devia chamar o rei"))
+    monkeypatch.setattr("ronaldo.atalhos.executar_comando", lambda *a, **k: ("entregue", "Tocou musica."))
+    monkeypatch.setattr(agent.subprocess, "run", lambda *a, **k: pytest.fail("não devia chamar o envio"))
     ok, reply = agent.run(
-        ["corte", "falar", "{text}"],
-        "batuqueiro toca X",
+        ["/mock/agente", "ask", "{text}"],
+        "musica",
         path="/bin",
         timeout=10,
         notify_reply=False,
-        name="rei",
+        name="agente",
         voz=True,
-        atalhos=[{"palavras": ["batuqueiro"], "terminal": "batuqueiro", "nome": "batuqueiro"}],
+        atalhos=[{"palavras": ["musica"], "comando": ["/mock/tocador"], "nome": "musica"}],
     )
-    assert ok and "Entregue" in reply
+    assert ok and "Tocou" in reply
     assert enfileirados == []
 
 
-def test_agent_corte_falhando_nao_enfileira(monkeypatch):
+def test_agent_envio_falhando_nao_enfileira(tmp_path, monkeypatch):
+    _config_voz(tmp_path, monkeypatch)
     enfileirados = []
     monkeypatch.setattr(voz, "ligado", lambda: True)
     monkeypatch.setattr(voz, "enfileirar", lambda *a, **k: enfileirados.append(a) or True)
     monkeypatch.setattr(
         agent.subprocess,
         "run",
-        lambda *a, **k: _proc(1, json.dumps({"ok": False, "error": {"message": "sem reino"}})),
+        lambda *a, **k: _proc(1, json.dumps({"ok": False, "error": {"message": "sem canal"}})),
     )
     ok, reply = agent.run(
-        ["corte", "falar", "{text}"],
+        ["/mock/agente", "ask", "{text}"],
         "pergunta",
         path="/bin",
         timeout=10,
         notify_reply=False,
-        name="rei",
+        name="agente",
         voz=True,
     )
-    assert ok is False and "sem reino" in reply
+    assert ok is False and "sem canal" in reply
+    assert enfileirados == []
+
+
+def test_agent_placeholder_faltando_na_resposta_falha_no_envio(tmp_path, monkeypatch):
+    _config_voz(tmp_path, monkeypatch)
+    enfileirados = []
+    monkeypatch.setattr(voz, "ligado", lambda: True)
+    monkeypatch.setattr(voz, "enfileirar", lambda *a, **k: enfileirados.append(a) or True)
+    monkeypatch.setattr(agent.subprocess, "run", lambda *a, **k: _proc(0, json.dumps({"ok": True})))
+    ok, reply = agent.run(
+        ["/mock/agente", "ask", "{text}"],
+        "pergunta",
+        path="/bin",
+        timeout=10,
+        notify_reply=False,
+        name="agente",
+        voz=True,
+    )
+    assert ok is False
+    assert "canal" in reply and "não devolveu" in reply
     assert enfileirados == []
 
 
@@ -729,7 +806,7 @@ def test_listener_para_fala_e_marca_gravacao(monkeypatch):
     monkeypatch.setattr(listener.voz, "marcar_gravando", lambda valor: eventos.append(("gravando", valor)))
     monkeypatch.setattr(listener.hexcli, "ensure_running", lambda: False)
     instancia = Listener.__new__(Listener)
-    instancia.cfg = Config(routes=[Route(model="x", action="command", command=["x"], hud=False)])
+    instancia.cfg = Config(routes=[Route(model="x", action="command", command=["/mock/agente"], hud=False)])
     instancia.path = "/bin"
     instancia._dictate(instancia.cfg.routes[0])
     assert eventos == ["parar", ("gravando", True), ("gravando", False)]
@@ -745,7 +822,7 @@ def test_listener_manda_voz_para_o_agente(monkeypatch):
     monkeypatch.setattr(listener.voz, "parar", lambda: None)
     monkeypatch.setattr(listener.voz, "marcar_gravando", lambda valor: None)
     instancia = Listener.__new__(Listener)
-    instancia.cfg = Config(routes=[Route(model="x", action="command", command=["corte"], voz=True)])
+    instancia.cfg = Config(routes=[Route(model="x", action="command", command=["/mock/agente"], voz=True)])
     instancia.path = "/bin"
     instancia._record_until_silence = lambda: "silence"
     instancia._dictate(instancia.cfg.routes[0])
@@ -755,16 +832,54 @@ def test_listener_manda_voz_para_o_agente(monkeypatch):
 def test_rota_voz_so_existe_em_command():
     with pytest.raises(ValueError, match="voz"):
         Route(model="x", action="type", voz=True)
-    rota = Route(model="x", action="command", command=["corte"], voz=True)
+    rota = Route(model="x", action="command", command=["/mock/agente"], voz=True)
     assert rota.voz is True
 
 
 def test_config_le_a_secao_voz_sem_avisar(tmp_path):
     arquivo = tmp_path / "c.toml"
-    arquivo.write_text('[[routes]]\nmodel="x"\naction="command"\ncommand=["c"]\nvoz=true\n[voz]\nvolume=0.2\n')
+    arquivo.write_text(
+        '[[routes]]\nmodel="x"\naction="command"\ncommand=["/mock/agente"]\nvoz=true\n'
+        '[voz]\nvolume=0.2\n'
+        'enviar=["/mock/agente","ask","{text}"]\n'
+        'resposta=["/mock/agente","status","{id}"]\n'
+    )
     cfg = Config.load(arquivo)
     assert cfg.routes[0].voz is True
-    assert cfg.voz == {"volume": 0.2}
+    assert cfg.voz == {
+        "volume": 0.2,
+        "enviar": ["/mock/agente", "ask", "{text}"],
+        "resposta": ["/mock/agente", "status", "{id}"],
+    }
+
+
+# ---------------------------------------------------------------- config do modo voz
+
+
+def test_consultar_resposta_usa_placeholders_do_config(tmp_path, monkeypatch):
+    _config_voz(tmp_path, monkeypatch)
+    visto = {}
+
+    def fake_run(argv, **kw):
+        visto["argv"] = argv
+        return subprocess.CompletedProcess(argv, 0, stdout='{"estado": "pronta", "texto": "oi", "em": 1.0}', stderr="")
+
+    monkeypatch.setattr(voz.subprocess, "run", fake_run)
+    assert voz.consultar_resposta("a" * 32, {"canal": "casa"}, path="/bin")["texto"] == "oi"
+    assert visto["argv"] == ["/mock/agente", "status", "--canal", "casa", "a" * 32, "--json"]
+
+
+def test_consultar_resposta_sem_campo_do_contexto_falha(tmp_path, monkeypatch):
+    _config_voz(tmp_path, monkeypatch)
+    monkeypatch.setattr(voz.subprocess, "run", lambda *a, **k: pytest.fail("não devia rodar"))
+    with pytest.raises(RuntimeError, match=r"\{canal\}"):
+        voz.consultar_resposta("a" * 32, {}, path="/bin")
+
+
+def test_consultar_resposta_sem_config_falha(tmp_path, monkeypatch):
+    monkeypatch.setattr(voz, "CONFIG", tmp_path / "nao-existe.toml")
+    with pytest.raises(RuntimeError, match=r"\[voz\]\.resposta"):
+        voz.consultar_resposta("a" * 32, {}, path="/bin")
 
 
 # ---------------------------------------------------------------- CLI
@@ -795,24 +910,6 @@ def test_cli_uso_invalido(capsys):
     assert voz.main([]) == 2
     assert voz.main(["nada"]) == 2
     assert "uso" in capsys.readouterr().err
-
-
-def test_consultar_resposta_poe_reino_antes_do_subcomando(monkeypatch):
-    """`--reino` é opção global do corte: depois de `resposta` o argparse recusa (achado na prova real)."""
-    import subprocess as sp
-
-    from ronaldo import voz
-
-    visto = {}
-
-    def fake_run(argv, **kw):
-        visto["argv"] = argv
-        return sp.CompletedProcess(argv, 0, stdout='{"estado": "pronta", "texto": "oi", "em": 1.0}', stderr="")
-
-    monkeypatch.setattr(voz.subprocess, "run", fake_run)
-    monkeypatch.setenv("RONALDO_CORTE", "/x/corte")
-    assert voz.consultar_resposta("a" * 32, "pessoal", path="/bin")["texto"] == "oi"
-    assert visto["argv"] == ["/x/corte", "--reino", "pessoal", "resposta", "a" * 32, "--json"]
 
 
 def test_parar_durante_sintese_wyoming_nao_toca(monkeypatch, tmp_path):
@@ -850,7 +947,7 @@ def test_falador_parar_entre_checagem_e_fala_nao_toca(tmp_path, monkeypatch):
     voz.ligar(estado)
     tocou = []
     f = voz.Falador(
-        consultar=lambda id, reino: {"estado": "pronta", "texto": "resposta", "em": 1.0},
+        consultar=lambda id, contexto: {"estado": "pronta", "texto": "resposta", "em": 1.0},
         estado=estado, falados=tmp_path / "falados.json", automatico=False,
         ligado_fn=lambda: True, gravando_fn=lambda: False,
     )
@@ -863,7 +960,7 @@ def test_falador_parar_entre_checagem_e_fala_nao_toca(tmp_path, monkeypatch):
 
     monkeypatch.setattr(f, "_falar_pronto", com_parar)
     monkeypatch.setattr(voz, "_sintetizar_say", lambda *a, **k: str(tmp_path / "x.aiff"))
-    f.enfileirar("pessoal", "a" * 32)
+    f.enfileirar("a" * 32, {})
     f.passo()
     assert tocou == []
     assert f.ja_falado("a" * 32)

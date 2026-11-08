@@ -1,277 +1,239 @@
-import json
 import subprocess
-import threading
 from types import SimpleNamespace
 
 import pytest
 
-from ronaldo import agent
-from ronaldo.atalhos import casar, entregar_terminal
+from ronaldo import agent, atalhos
+from ronaldo.atalhos import casar, encaminhar, executar_comando
 
 
-def result(data=None, rc=0, stderr=""):
-    return SimpleNamespace(returncode=rc, stdout=json.dumps(data) if not isinstance(data, str) else data, stderr=stderr)
+MUSICA = {"palavras": ["musica"], "comando": ["/mock/tocador", "--tocar"], "nome": "musica"}
+AGENTE = {"palavras": ["agente"], "comando": ["/mock/agente", "ask", "{text}"], "nome": "agente"}
 
 
-def setup_calls(monkeypatch, responses):
-    calls = []
-    def fake(argv, **kwargs):
-        calls.append(argv)
-        item = responses.pop(0)
-        if isinstance(item, Exception):
-            raise item
-        return item
-    monkeypatch.setattr("ronaldo.atalhos.shutil.which", lambda *a, **k: "/mock/hc")
-    monkeypatch.setattr("ronaldo.atalhos.subprocess.run", fake)
-    return calls
+def _proc(rc=0, stdout="", stderr=""):
+    return SimpleNamespace(returncode=rc, stdout=stdout, stderr=stderr)
 
 
-def live(state="done", turn=4, **overrides):
-    info = {"address": "ADDR", "created_ms": 123, "state": "live", "turn": turn,
-            "status": {"app": "claude-code", "state": state},
-            "labels": {"reino.batuqueiro": "1"}}
-    info.update(overrides)
-    return info
+# ---------------------------------------------------------------- casar
 
 
-def test_guards_and_blocked_never_send(monkeypatch):
-    dead = live()
-    dead["state"] = "dead"
-    bads = [dead, live(status={"app": "shell", "state": "done"}), live(labels={})]
-    for info in bads:
-        calls = setup_calls(monkeypatch, [result(info)])
-        assert entregar_terminal("term", "pedido", path="/mock") [0] == "falhou"
-        assert len(calls) == 1 and "keys" not in calls[0] and "send" not in calls[0]
-    calls = setup_calls(monkeypatch, [result(live(state="blocked"))])
-    assert entregar_terminal("term", "pedido", path="/mock")[0] == "falhou"
-    assert len(calls) == 1
+@pytest.mark.parametrize("texto", ["Ronaldo, musica!", "musica", "Música!", "Ronaldo, musica. Toca", "musica agora"])
+def test_atalho_curto_casa_fala_curta(texto):
+    assert casar(texto, [MUSICA])[0] is MUSICA
 
 
-def test_working_sends_without_ctrl_u_and_turn_confirms(monkeypatch):
-    calls = setup_calls(monkeypatch, [result(live("working", 4)), result({"started": True}), result(live("working", 5))])
-    assert entregar_terminal("term", "pedido", path="/mock") == ("entregue", "Entregue ao term.")
-    assert [c[1:3] for c in calls] == [["get", "term"], ["send", "ADDR"], ["get", "ADDR"]]
+@pytest.mark.parametrize("texto", ["musica do album novo que saiu ontem", "a musica", "musical", "Ronaldo, musica do album novo que saiu"])
+def test_atalho_curto_nao_pega_frase_longa_nem_palavra_parecida(texto):
+    assert casar(texto, [MUSICA]) is None
 
 
-def test_done_ctrl_u_started_false_enters_once(monkeypatch):
-    calls = setup_calls(monkeypatch, [result(live()), result({}), result({"started": False}), result({}), result(live("working", 5))])
-    assert entregar_terminal("term", "pedido", path="/mock")[0] == "entregue"
-    assert [c[1:3] for c in calls] == [["get", "term"], ["keys", "ADDR"], ["send", "ADDR"], ["keys", "ADDR"], ["get", "ADDR"]]
-    assert calls[1][3] == "ctrl+u" and calls[3][3] == "enter"
+def test_max_palavras_configuravel():
+    assert casar("musica a b c d e f", [{**MUSICA, "max_palavras": 10}]) is not None
 
 
-def test_started_true_no_enter_and_no_confirmation_if_only_working(monkeypatch):
-    calls = setup_calls(monkeypatch, [result(live()), result({}), result({"started": True}), result(live("working", 4))])
-    ticks = iter([0, 0, 5])
-    monkeypatch.setattr("ronaldo.atalhos.time.monotonic", lambda: next(ticks))
-    assert entregar_terminal("term", "pedido", path="/mock", timeout=3)[0] == "sem_confirmacao"
-    assert not any(c[1:3] == ["keys", "ADDR"] and c[3] == "enter" for c in calls)
+def test_atalho_com_texto_nao_tem_limite_e_devolve_o_resto():
+    texto = "agente, toca a música mais longa que existir agora"
+    atalho, resto = casar(texto, [AGENTE])
+    assert atalho is AGENTE and resto == "toca a música mais longa que existir agora"
 
 
-@pytest.mark.parametrize("send_result", [result({"other": True}), result("{"), result({}, rc=1, stderr="send failed"), subprocess.TimeoutExpired("hc", 10)])
-def test_send_errors_are_uncertain_and_never_retried(monkeypatch, send_result):
-    calls = setup_calls(monkeypatch, [result(live()), result({}), send_result])
-    status, message = entregar_terminal("term", "pedido", path="/mock")
-    assert status == "falhou" and "incerta" in message
-    assert sum(c[1] == "send" for c in calls) == 1
+def test_atalho_com_texto_sem_resto_casa_vazio():
+    assert casar("agente", [AGENTE]) == (AGENTE, "")
 
 
-def test_missing_hc_and_empty_remainder(monkeypatch):
-    monkeypatch.setattr("ronaldo.atalhos.shutil.which", lambda *a, **k: None)
-    assert entregar_terminal("term", "pedido", path="/mock")[0] == "falhou"
-    assert entregar_terminal("term", "  ", path="/mock")[0] == "falhou"
+def test_primeiro_de_dois_atalhos_casa():
+    segundo = {"palavras": ["agente"], "comando": ["/mock/agente"], "nome": "agente"}
+    assert casar("Agente, toca", [MUSICA, segundo])[0] is segundo
 
 
-def test_match_preserves_remainder():
-    shortcuts = [{"palavras": ["batuqueiro"], "terminal": "t", "nome": "batuqueiro"}]
-    assert casar("Batuqueiro, toca São-João https://x.y/z?a=1", shortcuts)[1] == "toca São-João https://x.y/z?a=1"
+def test_qualquer_posicao_continua_so_em_fala_curta():
+    som = {"palavras": ["som", "sons"], "comando": ["/mock/tocador"], "nome": "som", "qualquer_posicao": True}
+    for texto in ["Do som porra.", "som porra", "que som!", "Ronaldo, som, porra!"]:
+        assert casar(texto, [som])[0] is som
+    for texto in ["o som do time adversário no último minuto", "Ronaldo, que horas são"]:
+        assert casar(texto, [som]) is None
 
 
-def test_lock_keeps_deliveries_sequential(monkeypatch):
-    entered = []
-    gate = threading.Event()
-    def fake(argv, **kwargs):
-        if argv[1] == "get":
-            if argv[2] == "t":
-                return result(live("working", 0))
-            return result(live("working", 1))
-        if argv[1] == "send":
-            entered.append(argv[3])
-            if len(entered) == 1:
-                gate.wait(1)
-            return result({"started": True})
-        raise AssertionError(argv)
-    monkeypatch.setattr("ronaldo.atalhos.shutil.which", lambda *a, **k: "/mock/hc")
-    monkeypatch.setattr("ronaldo.atalhos.subprocess.run", fake)
-    # Each call sees the same top-level terminal state; the lock still prevents
-    # the second send from occurring before the first confirmation poll.
-    first = threading.Thread(target=entregar_terminal, args=("t", "one"), kwargs={"path": "/mock", "timeout": 0.001})
-    second = threading.Thread(target=entregar_terminal, args=("t", "two"), kwargs={"path": "/mock", "timeout": 0.001})
-    first.start()
-    while not entered:
-        pass
-    second.start()
-    gate.set()
-    first.join()
-    second.join()
-    assert entered == ["one", "two"]
+def test_sem_qualquer_posicao_continua_so_no_comeco():
+    assert casar("do som porra", [{"palavras": ["som"], "comando": ["/mock/tocador"]}]) is None
 
 
-def test_agent_shortcut_hud_and_no_fallback(monkeypatch):
-    shortcut = {"palavras": ["batuqueiro"], "terminal": "t", "nome": "Batuqueiro"}
-    monkeypatch.setattr("ronaldo.atalhos.entregar_terminal", lambda *a, **k: ("entregue", "Entregue ao Batuqueiro."))
-    monkeypatch.setattr(agent.subprocess, "run", lambda *a, **k: pytest.fail("corte chamado"))
-    shown = []
-    monkeypatch.setattr("ronaldo.hud.show", lambda *a: shown.append(a))
-    assert agent.run(["corte"], "batuqueiro, toca", path="/mock", timeout=1, notify_reply=False, name="rota", hud=True, req_id=99, atalhos=[shortcut])[0]
-    assert shown[-1][2:4] == ("ok", 6) and shown[-1][-1] == 99
-    monkeypatch.setattr("ronaldo.atalhos.entregar_terminal", lambda *a, **k: ("falhou", "nope"))
-    assert not agent.run(["corte"], "batuqueiro, toca", path="/mock", timeout=1, notify_reply=False, name="rota", hud=True, req_id=100, atalhos=[shortcut])[0]
-    assert shown[-1][2:4] == ("err", 12) and shown[-1][-1] == 100
-    assert shown[-1][1] == "nope"
-    monkeypatch.setattr("ronaldo.atalhos.entregar_terminal", lambda *a, **k: ("sem_confirmacao", "Enviado ao Batuqueiro, sem confirmação"))
-    assert agent.run(["corte"], "batuqueiro, toca", path="/mock", timeout=1, notify_reply=False, name="rota", hud=True, req_id=101, atalhos=[shortcut])[0]
-    assert shown[-1][2:4] == ("warn", 6) and shown[-1][-1] == 101
-    shown.clear()
-    monkeypatch.setattr(agent.subprocess, "run", lambda *a, **k: SimpleNamespace(returncode=0, stdout="fallback", stderr=""))
-    assert agent.run(["echo", "fallback"], "fala pro batuqueiro", path="/bin", timeout=1, notify_reply=False, name="rota", hud=False, atalhos=[shortcut])[0]
-    assert not shown
-
-
-def test_first_of_two_shortcuts_matches_and_matched_hud_can_be_disabled(monkeypatch):
-    shortcuts = [
-        {"palavras": ["primeiro"], "terminal": "t1"},
-        {"palavras": ["batuqueiro"], "terminal": "t2", "nome": "Batuqueiro"},
-    ]
-    assert casar("Batuqueiro, toca", shortcuts)[0] is shortcuts[1]
-    monkeypatch.setattr("ronaldo.atalhos.entregar_terminal", lambda *a, **k: ("entregue", "ok"))
-    shown = []
-    monkeypatch.setattr("ronaldo.hud.show", lambda *a: shown.append(a))
-    assert agent.run(["corte"], "batuqueiro, toca", path="/mock", timeout=1, notify_reply=False, name="rota", hud=False, atalhos=shortcuts)[0]
-    assert not shown
-
-
-@pytest.mark.parametrize("payload", [{**live(), "status": None}, {**live(), "labels": None}, [], None])
-def test_invalid_initial_todo_fails_before_send(monkeypatch, payload):
-    calls = setup_calls(monkeypatch, [result(payload)])
-    status, message = entregar_terminal("term", "pedido", path="/mock")
-    assert status == "falhou" and "resposta inválida de hc" in message
-    assert len(calls) == 1
-
-
-@pytest.mark.parametrize("payload", [[], None, {**live(), "labels": None}])
-def test_invalid_confirmation_is_uncertain(monkeypatch, payload):
-    calls = setup_calls(monkeypatch, [result(live()), result({}), result({"started": True}), result(payload)])
-    status, message = entregar_terminal("term", "pedido", path="/mock")
-    assert status == "falhou" and "incerta" in message
-
-
-@pytest.mark.parametrize("started", [None, "false", 0, "missing"])
-def test_invalid_started_is_uncertain_without_enter(monkeypatch, started):
-    data = {} if started == "missing" else {"started": started}
-    calls = setup_calls(monkeypatch, [result(live()), result({}), result(data)])
-    status, message = entregar_terminal("term", "pedido", path="/mock")
-    assert status == "falhou" and "incerta" in message
-    assert not any(c[1:3] == ["keys", "ADDR"] and c[3] == "enter" for c in calls)
-
-
-@pytest.mark.parametrize("changed", [{"created_ms": 124}, {"status": {"app": "shell", "state": "working"}}, {"labels": {}}, {"turn": 100}])
-def test_confirmation_of_replaced_todo_is_uncertain(monkeypatch, changed):
-    confirmation = live("working", 5)
-    confirmation.update(changed)
-    calls = setup_calls(monkeypatch, [result(live()), result({}), result({"started": True}), result(confirmation)])
-    status, message = entregar_terminal("term", "pedido", path="/mock")
-    assert status == "falhou" and "incerta" in message and "foi substituído durante a entrega" in message
-
-
-def test_hc_json_error_uses_message_only(monkeypatch):
-    calls = setup_calls(monkeypatch, [result(live("working")), result({}, rc=1, stderr='{"error":{"message":"sem terminal"}}')])
-    status, message = entregar_terminal("term", "pedido", path="/mock")
-    assert status == "falhou" and message.endswith("sem terminal") and '{"error"' not in message
-
-
-def test_agent_shortcut_unexpected_exception_shows_error_hud_and_returns(monkeypatch):
-    shortcut = {"palavras": ["batuqueiro"], "terminal": "t", "nome": "Batuqueiro"}
-    monkeypatch.setattr("ronaldo.atalhos.entregar_terminal", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("inesperado")))
-    shown = []
-    monkeypatch.setattr("ronaldo.hud.show", lambda *a: shown.append(a))
-    result_value = agent.run(["corte"], "batuqueiro, toca", path="/mock", timeout=1, notify_reply=False, name="rota", hud=True, req_id=102, atalhos=[shortcut])
-    assert result_value == (False, "inesperado")
-    assert shown[-1][0].startswith("❌") and shown[-1][2] == "err"
-
-
-# ---------------------------------------------------------------- atalho com comando (gol do Rematch)
-
-GOL = {"palavras": ["gol gol gol", "golaço", "gol"], "comando": ["/usr/bin/afplay", "-v", "0.6", "~/Music/Reino/gol-rematch.wav"], "nome": "gol"}
-
-
-@pytest.mark.parametrize("texto", ["Ronaldo, gol!", "gol", "Golaço!", "Ronaldo, gol gol gol.", "GOL GOL GOL", "gol, que lindo"])
-def test_atalho_de_comando_casa_fala_curta(texto):
-    assert casar(texto, [GOL])[0] is GOL
-
-
-@pytest.mark.parametrize("texto", ["gol do time adversário no último minuto de jogo", "golpe de mestre", "o gol", "Ronaldo, gol do Fulano no Rematch hoje cedo"])
-def test_atalho_de_comando_nao_pega_frase_comum(texto):
-    assert casar(texto, [GOL]) is None
-
-
-def test_max_palavras_configuravel_e_terminal_sem_limite():
-    assert casar("gol a b c d e f", [{**GOL, "max_palavras": 10}]) is not None
-    bat = {"palavras": ["batuqueiro"], "terminal": "t"}
-    assert casar("batuqueiro toca a música mais longa que existir agora", [bat]) is not None
+# ---------------------------------------------------------------- executar_comando
 
 
 def test_executar_comando_expande_til_e_nao_espera(monkeypatch, tmp_path):
-    from ronaldo import atalhos
     monkeypatch.setenv("HOME", str(tmp_path))
     vistos = []
     monkeypatch.setattr(atalhos.subprocess, "Popen", lambda argv, **kw: vistos.append((argv, kw)) or SimpleNamespace(pid=1))
-    status, msg = atalhos.executar_comando(GOL["comando"], path="/usr/bin:/bin", nome="gol")
-    assert status == "entregue" and "gol" in msg
+    status, msg = executar_comando(["/usr/bin/afplay", "-v", "0.6", "~/Music/favorita.wav"], path="/usr/bin:/bin", nome="musica")
+    assert status == "entregue" and "musica" in msg
     argv, kw = vistos[0]
-    assert argv == ["/usr/bin/afplay", "-v", "0.6", f"{tmp_path}/Music/Reino/gol-rematch.wav"]
+    assert argv == ["/usr/bin/afplay", "-v", "0.6", f"{tmp_path}/Music/favorita.wav"]
     assert kw.get("start_new_session") is True and kw["stdin"] == subprocess.DEVNULL
 
 
 def test_executar_comando_falha_vira_falhou(monkeypatch):
-    from ronaldo import atalhos
-    def boom(*a, **k): raise FileNotFoundError("afplay")
+    def boom(*a, **k):
+        raise FileNotFoundError("tocador")
+
     monkeypatch.setattr(atalhos.subprocess, "Popen", boom)
-    status, msg = atalhos.executar_comando(["/nao/existe"], path="/bin", nome="gol")
-    assert status == "falhou" and "afplay" in msg
+    status, msg = executar_comando(["/nao/existe"], path="/bin", nome="musica")
+    assert status == "falhou" and "tocador" in msg
 
 
-def test_agent_atalho_de_comando_nao_chama_o_rei_nem_o_modo_voz(monkeypatch):
-    from ronaldo import voz
-    monkeypatch.setattr(voz, "ligado", lambda *a, **k: True)
-    monkeypatch.setattr(agent, "_falar_ao_rei", lambda *a, **k: pytest.fail("modo voz chamado"))
-    monkeypatch.setattr(agent.subprocess, "run", lambda *a, **k: pytest.fail("corte chamado"))
-    monkeypatch.setattr("ronaldo.atalhos.entregar_terminal", lambda *a, **k: pytest.fail("hc chamado"))
-    rodou = []
-    monkeypatch.setattr("ronaldo.atalhos.executar_comando", lambda argv, **k: rodou.append(argv) or ("entregue", "Tocou gol."))
+# ---------------------------------------------------------------- encaminhar
+
+
+def _run(monkeypatch, resultado):
+    visto = {}
+
+    def fake(argv, **kw):
+        visto["argv"] = argv
+        visto["kw"] = kw
+        if isinstance(resultado, Exception):
+            raise resultado
+        return resultado
+
+    monkeypatch.setattr(atalhos.subprocess, "run", fake)
+    return visto
+
+
+def test_encaminhar_zero_usa_a_primeira_linha_do_stdout(monkeypatch):
+    visto = _run(monkeypatch, _proc(0, "Entregue ao canal.\nmais nada"))
+    assert encaminhar(AGENTE["comando"], "  toca a música  ", path="/mock", nome="agente") == ("entregue", "Entregue ao canal.")
+    assert visto["argv"] == ["/mock/agente", "ask", "toca a música"]
+    assert visto["kw"]["timeout"] == 15.0 and visto["kw"]["stdin"] == subprocess.DEVNULL
+
+
+def test_encaminhar_zero_sem_stdout_usa_mensagem_padrao(monkeypatch):
+    _run(monkeypatch, _proc(0, "\n  \n"))
+    assert encaminhar(AGENTE["comando"], "toca", path="/mock", nome="agente") == ("entregue", "Entregue ao agente.")
+
+
+def test_encaminhar_75_vira_sem_confirmacao(monkeypatch):
+    _run(monkeypatch, _proc(75, "Enviado, sem confirmação\n"))
+    assert encaminhar(AGENTE["comando"], "toca", path="/mock", nome="agente") == ("sem_confirmacao", "Enviado, sem confirmação")
+
+
+def test_encaminhar_75_sem_stdout_usa_mensagem_padrao(monkeypatch):
+    _run(monkeypatch, _proc(75, ""))
+    assert encaminhar(AGENTE["comando"], "toca", path="/mock", nome="agente") == ("sem_confirmacao", "Enviado ao agente, sem confirmação")
+
+
+def test_encaminhar_outro_codigo_usa_a_primeira_linha_do_stderr(monkeypatch):
+    _run(monkeypatch, _proc(1, "stdout irrelevante", "falhou feio\nresto\n"))
+    assert encaminhar(AGENTE["comando"], "toca", path="/mock", nome="agente") == ("falhou", "falhou feio")
+
+
+def test_encaminhar_falha_sem_stderr_usa_stdout(monkeypatch):
+    _run(monkeypatch, _proc(2, "detalhe do stdout"))
+    assert encaminhar(AGENTE["comando"], "toca", path="/mock", nome="agente") == ("falhou", "detalhe do stdout")
+
+
+def test_encaminhar_timeout_vira_sem_confirmacao(monkeypatch):
+    _run(monkeypatch, subprocess.TimeoutExpired("agente", 15))
+    assert encaminhar(AGENTE["comando"], "toca", path="/mock", nome="agente") == (
+        "sem_confirmacao",
+        "agente não respondeu em 15s; entrega incerta",
+    )
+
+
+def test_encaminhar_comando_inexistente_falha(monkeypatch):
+    _run(monkeypatch, FileNotFoundError("agente"))
+    status, msg = encaminhar(AGENTE["comando"], "toca", path="/mock", nome="agente")
+    assert status == "falhou" and "não encontrado" in msg
+
+
+def test_encaminhar_resto_vazio_falha_sem_rodar(monkeypatch):
+    monkeypatch.setattr(atalhos.subprocess, "run", lambda *a, **k: pytest.fail("não devia rodar"))
+    assert encaminhar(AGENTE["comando"], "  ", path="/mock", nome="agente") == ("falhou", "nada pra mandar ao agente")
+
+
+def test_encaminhar_expande_til_sem_expandir_o_texto(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    visto = _run(monkeypatch, _proc(0, "ok"))
+    encaminhar(["~/bin/agente", "ask", "{text}"], "~ não é caminho", path="/mock")
+    assert visto["argv"] == [f"{tmp_path}/bin/agente", "ask", "~ não é caminho"]
+
+
+# ---------------------------------------------------------------- agent e HUD
+
+
+def test_agent_atalho_curto_hud_e_sem_fallback(monkeypatch):
+    monkeypatch.setattr("ronaldo.atalhos.executar_comando", lambda *a, **k: ("entregue", "Tocou musica."))
+    monkeypatch.setattr(agent.subprocess, "run", lambda *a, **k: pytest.fail("agente chamado"))
     shown = []
     monkeypatch.setattr("ronaldo.hud.show", lambda *a: shown.append(a))
-    ok, msg = agent.run(["corte", "falar", "{text}"], "Ronaldo, gol!", path="/mock", timeout=1, notify_reply=False, name="rota", hud=True, req_id=7, atalhos=[GOL], voz=True)
-    assert ok and rodou == [GOL["comando"]]
+    assert agent.run(["/mock/agente"], "musica", path="/mock", timeout=1, notify_reply=False, name="rota", hud=True, req_id=99, atalhos=[MUSICA])[0]
+    assert shown[-1][2:4] == ("ok", 6) and shown[-1][-1] == 99
+
+    monkeypatch.setattr("ronaldo.atalhos.executar_comando", lambda *a, **k: ("falhou", "nope"))
+    assert not agent.run(["/mock/agente"], "musica", path="/mock", timeout=1, notify_reply=False, name="rota", hud=True, req_id=100, atalhos=[MUSICA])[0]
+    assert shown[-1][2:4] == ("err", 12) and shown[-1][-1] == 100
+    assert shown[-1][1] == "nope"
+
+
+def test_agent_atalho_com_texto_espera_e_mostra_o_aviso(monkeypatch):
+    visto = {}
+
+    def fake(argv, **kw):
+        visto["argv"] = argv
+        return _proc(75, "Enviado, sem confirmação")
+
+    monkeypatch.setattr("ronaldo.atalhos.subprocess.run", fake)
+    shown = []
+    monkeypatch.setattr("ronaldo.hud.show", lambda *a: shown.append(a))
+    ok, msg = agent.run(["/mock/agente"], "agente, toca a música", path="/mock", timeout=1, notify_reply=False, name="rota", hud=True, req_id=101, atalhos=[AGENTE])
+    assert ok and msg == "Enviado, sem confirmação"
+    assert visto["argv"][-1] == "toca a música"
+    assert shown[-1][2:4] == ("warn", 6) and shown[-1][-1] == 101
+
+
+def test_agent_atalho_com_texto_timeout_mostra_aviso(monkeypatch):
+    _run(monkeypatch, subprocess.TimeoutExpired("agente", 15))
+    shown = []
+    monkeypatch.setattr("ronaldo.hud.show", lambda *a: shown.append(a))
+    ok, msg = agent.run(["/mock/agente"], "agente, toca a música", path="/mock", timeout=1, notify_reply=False, name="rota", hud=True, req_id=104, atalhos=[AGENTE])
+    assert ok and msg == "agente não respondeu em 15s; entrega incerta"
+    assert shown[-1][2:4] == ("warn", 6) and shown[-1][-1] == 104
+
+
+def test_agent_atalho_com_texto_e_resto_vazio_falha(monkeypatch):
+    monkeypatch.setattr("ronaldo.atalhos.subprocess.run", lambda *a, **k: pytest.fail("não devia rodar"))
+    shown = []
+    monkeypatch.setattr("ronaldo.hud.show", lambda *a: shown.append(a))
+    ok, msg = agent.run(["/mock/agente"], "agente", path="/mock", timeout=1, notify_reply=False, name="rota", hud=True, req_id=102, atalhos=[AGENTE])
+    assert ok is False and "nada pra mandar" in msg
+    assert shown[-1][2:4] == ("err", 12) and shown[-1][-1] == 102
+
+
+def test_agent_atalho_sem_casar_cai_no_agente(monkeypatch):
+    monkeypatch.setattr(agent.subprocess, "run", lambda *a, **k: _proc(0, "fallback"))
+    shown = []
+    monkeypatch.setattr("ronaldo.hud.show", lambda *a: shown.append(a))
+    assert agent.run(["/mock/agente"], "outra coisa", path="/bin", timeout=1, notify_reply=False, name="rota", hud=False, atalhos=[MUSICA])[0]
+    assert not shown
+
+
+def test_agent_atalho_nao_chama_o_modo_voz_nem_o_envio(monkeypatch):
+    from ronaldo import voz
+
+    monkeypatch.setattr(voz, "ligado", lambda *a, **k: True)
+    monkeypatch.setattr(agent, "_falar_com_voz", lambda *a, **k: pytest.fail("modo voz chamado"))
+    monkeypatch.setattr(agent.subprocess, "run", lambda *a, **k: pytest.fail("envio chamado"))
+    rodou = []
+    monkeypatch.setattr("ronaldo.atalhos.executar_comando", lambda argv, **k: rodou.append(argv) or ("entregue", "Tocou musica."))
+    shown = []
+    monkeypatch.setattr("ronaldo.hud.show", lambda *a: shown.append(a))
+    ok, msg = agent.run(["/mock/agente", "ask", "{text}"], "Ronaldo, musica!", path="/mock", timeout=1, notify_reply=False, name="rota", hud=True, req_id=7, atalhos=[MUSICA], voz=True)
+    assert ok and rodou == [MUSICA["comando"]]
     assert shown[-1][2] == "ok"
 
 
-# ---------------------------------------------------------------- gol em qualquer posição (fala real "Do gol porra.")
-
-GOL_QQ = {**GOL, "qualquer_posicao": True}
-
-
-@pytest.mark.parametrize("texto", ["Do gol porra.", "gol porra", "do gol porra", "que golaço", "gol caralho", "Goool!",
-                                   "GOOOOL porra", "Ronaldo, gol, porra!", "que golaaaaço", "gol"])
-def test_gol_em_qualquer_posicao_frases_reais(texto):
-    assert casar(texto, [GOL_QQ])[0] is GOL_QQ
-
-
-@pytest.mark.parametrize("texto", ["o gol do time adversário no último minuto", "golpe de mestre", "goleiro defendeu",
-                                   "Ronaldo, que horas são", "gola da camisa"])
-def test_gol_em_qualquer_posicao_nao_pega(texto):
-    assert casar(texto, [GOL_QQ]) is None
-
-
-def test_sem_qualquer_posicao_continua_so_no_comeco():
-    assert casar("do gol porra", [GOL]) is None
+def test_agent_atalho_com_excecao_inesperada_mostra_erro(monkeypatch):
+    monkeypatch.setattr("ronaldo.atalhos.executar_comando", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("inesperado")))
+    shown = []
+    monkeypatch.setattr("ronaldo.hud.show", lambda *a: shown.append(a))
+    assert agent.run(["/mock/agente"], "musica", path="/mock", timeout=1, notify_reply=False, name="rota", hud=True, req_id=103, atalhos=[MUSICA]) == (False, "inesperado")
+    assert shown[-1][0].startswith("❌") and shown[-1][2] == "err"

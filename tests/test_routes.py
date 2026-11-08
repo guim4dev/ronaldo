@@ -26,12 +26,12 @@ action = "type"
 [[routes]]
 model = "extra/ok_boss.onnx"
 action = "command"
-command = ["claude", "-p", "{text}"]
+command = ["/mock/agente", "ask", "{text}"]
 threshold = 0.6
 ''')
     typing, agent_route = cfg.routes
     assert typing.name == "wall-e" and typing.threshold == 0.5 and typing.press_enter
-    assert agent_route.name == "ok_boss" and agent_route.command == ["claude", "-p", "{text}"]
+    assert agent_route.name == "ok_boss" and agent_route.command == ["/mock/agente", "ask", "{text}"]
     assert agent_route.threshold == 0.6 and agent_route.notify
 
 
@@ -44,7 +44,7 @@ def test_invalid_routes_are_rejected(tmp_path):
 
 def test_pick_route_takes_the_strongest_above_its_threshold():
     a = Route(model="a.onnx", threshold=0.5)
-    b = Route(model="b.onnx", action="command", command=["x"], threshold=0.8)
+    b = Route(model="b.onnx", action="command", command=["/mock/agente"], threshold=0.8)
     lst = Listener.__new__(Listener)
     lst.routes = {"a": a, "b": b}
     assert lst._pick({"a": 0.2, "b": 0.7}) is None  # b is below its own threshold
@@ -76,15 +76,15 @@ def test_command_route_dispatches_instead_of_typing(monkeypatch):
     typed, sent = [], []
     monkeypatch.setattr(macos, "type_and_submit", lambda *a, **k: typed.append(a))
     monkeypatch.setattr(agent, "dispatch", lambda template, text, **kw: sent.append((template, text, kw["name"])))
-    route = Route(model="boss.onnx", action="command", command=["agente", "{text}"])
+    route = Route(model="boss.onnx", action="command", command=["/mock/agente", "ask", "{text}"])
     lst = _listener_with(monkeypatch, route, "abre o PR")
     lst._dictate(route)
-    assert typed == [] and sent == [(["agente", "{text}"], "abre o PR", "boss")]
+    assert typed == [] and sent == [(["/mock/agente", "ask", "{text}"], "abre o PR", "boss")]
 
 
 def test_agent_gets_text_as_argv_or_stdin():
-    assert agent.build_argv(["claude", "-p", "{text}"], 'diz "oi"; rm -rf ~') == (["claude", "-p", 'diz "oi"; rm -rf ~'], None)
-    assert agent.build_argv(["hermes", "chat"], "faz X") == (["hermes", "chat"], "faz X")
+    assert agent.build_argv(["/mock/agente", "ask", "{text}"], 'diz "oi"; rm -rf ~') == (["/mock/agente", "ask", 'diz "oi"; rm -rf ~'], None)
+    assert agent.build_argv(["/mock/agente", "chat"], "faz X") == (["/mock/agente", "chat"], "faz X")
 
 
 def test_agent_reply_becomes_a_notification(monkeypatch):
@@ -127,55 +127,88 @@ def test_silent_route_still_reports_failures(monkeypatch):
 
 def test_shortcut_matching_rules():
     from ronaldo.atalhos import casar
-    shortcuts = [{"palavras": ["batuqueiro", "batuqueira"], "terminal": "x"}]
-    for text, remainder in [("Batuqueiro, toca X", "toca X"), ("batuqueiro toca X", "toca X"), ("Ronaldo, batuqueiro. Pausa", "Pausa"), ("BATUQUEIRA pula", "pula")]:
+    shortcuts = [{"palavras": ["musica", "musicas"], "comando": ["/mock/tocador"]}]
+    for text, remainder in [("Música, toca X", "toca X"), ("musica toca X", "toca X"), ("Ronaldo, musica. Pausa", "Pausa"), ("MUSICAS pula", "pula")]:
         assert casar(text, shortcuts) == (shortcuts[0], remainder)
-    for text in ("fala pro batuqueiro tocar", "batuqueirotoca", "pessoal, batuqueiro", "Ronaldo batuqueiros"):
+    for text in ("fala pra musica tocar", "musicatoca", "pessoal, musica", "Ronaldo musical"):
         assert casar(text, shortcuts) is None
-    assert casar("batuqueiro", []) is None
+    assert casar("musica", []) is None
 
 
 def test_shortcut_config_and_validation(tmp_path):
     cfg = write(tmp_path, '''[[routes]]
 model="ronaldo_ptbr.onnx"
 action="command"
-command=["claude"]
+command=["/mock/agente"]
 [[routes.atalhos]]
-palavras=["batuqueiro"]
-terminal="batuqueiro"
-nome="batuqueiro"
+palavras=["musica"]
+comando=["/mock/tocador"]
+nome="musica"
 ''')
-    assert cfg.routes[0].atalhos == [{"palavras": ["batuqueiro"], "terminal": "batuqueiro", "nome": "batuqueiro"}]
+    assert cfg.routes[0].atalhos == [{"palavras": ["musica"], "comando": ["/mock/tocador"], "nome": "musica"}]
     with pytest.raises(ValueError, match="repetida"):
-        write(tmp_path, '[[routes]]\nmodel="x"\naction="command"\ncommand=["x"]\n[[routes.atalhos]]\npalavras=["oi"]\nterminal="t"\n[[routes.atalhos]]\npalavras=["oi"]\nterminal="t"\n')
+        write(tmp_path, '[[routes]]\nmodel="x"\naction="command"\ncommand=["/mock/agente"]\n[[routes.atalhos]]\npalavras=["oi"]\ncomando=["a"]\n[[routes.atalhos]]\npalavras=["oi"]\ncomando=["a"]\n')
+
+
+def test_atalho_terminal_sai_e_pede_comando_com_texto(tmp_path):
+    with pytest.raises(ValueError, match=r"terminal saiu; use comando com \{text\}"):
+        write(tmp_path, '[[routes]]\nmodel="x"\naction="command"\ncommand=["/mock/agente"]\n[[routes.atalhos]]\npalavras=["musica"]\nterminal="musica"\n')
 
 
 def test_atalho_de_comando_valida(tmp_path):
-    cfg = write(tmp_path, '[[routes]]\nmodel="x"\naction="command"\ncommand=["x"]\n[[routes.atalhos]]\npalavras=["gol"]\ncomando=["/usr/bin/afplay","a.wav"]\n')
-    assert cfg.routes[0].atalhos[0]["comando"] == ["/usr/bin/afplay", "a.wav"]
-    for corpo in ['palavras=["gol"]\n', 'palavras=["gol"]\ncomando=[]\n', 'palavras=["gol"]\ncomando="afplay"\n',
-                  'palavras=["gol"]\ncomando=["a"]\nterminal="t"\n', 'palavras=["gol"]\ncomando=["a"]\nmax_palavras=0\n']:
-        with pytest.raises(ValueError):
-            write(tmp_path, '[[routes]]\nmodel="x"\naction="command"\ncommand=["x"]\n[[routes.atalhos]]\n' + corpo)
-
-
-def test_qualquer_posicao_so_em_atalho_de_comando_e_booleano(tmp_path):
-    base = '[[routes]]\nmodel="x"\naction="command"\ncommand=["x"]\n[[routes.atalhos]]\n'
-    cfg = write(tmp_path, base + 'palavras=["gol"]\ncomando=["a"]\nqualquer_posicao=true\n')
-    assert cfg.routes[0].atalhos[0]["qualquer_posicao"] is True
-    for corpo in ['palavras=["gol"]\nterminal="t"\nqualquer_posicao=true\n', 'palavras=["gol"]\ncomando=["a"]\nqualquer_posicao="sim"\n']:
+    base = '[[routes]]\nmodel="x"\naction="command"\ncommand=["/mock/agente"]\n[[routes.atalhos]]\n'
+    cfg = write(tmp_path, base + 'palavras=["musica"]\ncomando=["/mock/tocador","a.wav"]\n')
+    assert cfg.routes[0].atalhos[0]["comando"] == ["/mock/tocador", "a.wav"]
+    for corpo in [
+        'palavras=["musica"]\n',
+        'palavras=["musica"]\ncomando=[]\n',
+        'palavras=["musica"]\ncomando="tocador"\n',
+        'palavras=["musica"]\ncomando=["a"]\nmax_palavras=0\n',
+        'palavras=[]\ncomando=["a"]\n',
+    ]:
         with pytest.raises(ValueError):
             write(tmp_path, base + corpo)
+
+
+def test_qualquer_posicao_so_em_atalho_sem_texto_e_booleano(tmp_path):
+    base = '[[routes]]\nmodel="x"\naction="command"\ncommand=["/mock/agente"]\n[[routes.atalhos]]\n'
+    cfg = write(tmp_path, base + 'palavras=["som"]\ncomando=["/mock/tocador"]\nqualquer_posicao=true\n')
+    assert cfg.routes[0].atalhos[0]["qualquer_posicao"] is True
+    for corpo in [
+        'palavras=["som"]\ncomando=["/mock/agente","{text}"]\nqualquer_posicao=true\n',
+        'palavras=["som"]\ncomando=["/mock/tocador"]\nqualquer_posicao="sim"\n',
+    ]:
+        with pytest.raises(ValueError):
+            write(tmp_path, base + corpo)
+
+
+VOZ = '[[routes]]\nmodel="x"\naction="command"\ncommand=["/mock/agente"]\nvoz=true\n'
+
+
+def test_voz_true_exige_enviar_e_resposta_no_load(tmp_path):
+    with pytest.raises(ValueError, match=r"\[voz\]\.enviar"):
+        write(tmp_path, VOZ)
+    with pytest.raises(ValueError, match=r"\[voz\]\.enviar"):
+        write(tmp_path, VOZ + '[voz]\nenviar=["/mock/agente","ask","{text}"]\n')
+    with pytest.raises(ValueError, match=r"\[voz\]\.enviar"):
+        write(tmp_path, VOZ + '[voz]\nresposta=["/mock/agente","status","{id}"]\n')
+    cfg = write(tmp_path, VOZ + '[voz]\nenviar=["/mock/agente","ask","{text}"]\nresposta=["/mock/agente","status","{id}"]\n')
+    assert cfg.routes[0].voz is True
+
+
+def test_rota_sem_voz_nao_exige_os_comandos(tmp_path):
+    cfg = write(tmp_path, '[[routes]]\nmodel="x"\naction="command"\ncommand=["/mock/agente"]\n')
+    assert cfg.routes[0].voz is False
 
 
 @pytest.mark.parametrize("texto, vai", [
     ("Aldo.", False), ("Aldo co.", True), ("Do gol porra.", True), ("naldo", False), ("Ronaldo!", False),
     ("do", False), ("o.", False), ("Ronaldo, Ronaldo.", False), ("...", False), ("Ronaldo, toca", True),
 ])
-def test_resto_do_nome_nao_vai_pro_rei(monkeypatch, texto, vai):
+def test_resto_do_nome_nao_vai_pro_agente(monkeypatch, texto, vai):
     sent = []
     monkeypatch.setattr(agent, "dispatch", lambda template, text, **kw: sent.append(text))
-    route = Route(model="ronaldo_ptbr.onnx", action="command", command=["corte", "falar", "{text}"], hud=False)
+    route = Route(model="ronaldo_ptbr.onnx", action="command", command=["/mock/agente", "ask", "{text}"], hud=False)
     lst = _listener_with(monkeypatch, route, texto)
     lst._dictate(route)
     assert sent == ([texto] if vai else [])

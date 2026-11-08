@@ -46,7 +46,7 @@ class Route:
     timeout_seconds: float = 900  # command: give up on the agent after this long
     name: str = ""
     atalhos: list[dict] = field(default_factory=list)
-    voz: bool = False  # command: envia com --id e fala a resposta do rei (modo voz ligado)
+    voz: bool = False  # command: envia pelos comandos de [voz] e fala a resposta (modo voz ligado)
 
     def __post_init__(self):
         if self.action not in ACTIONS:
@@ -61,19 +61,18 @@ class Route:
         for item in self.atalhos:
             if not item.get("palavras"):
                 raise ValueError("atalho precisa de palavras")
-            if "comando" in item:
-                cmd = item["comando"]
-                if "terminal" in item:
-                    raise ValueError("atalho tem terminal ou comando, não os dois")
-                if not (isinstance(cmd, list) and cmd and all(isinstance(c, str) and c for c in cmd)):
-                    raise ValueError("comando do atalho precisa ser uma lista de strings")
-                mp = item.get("max_palavras", 1)
+            if "terminal" in item:
+                raise ValueError("atalho terminal saiu; use comando com {text}")
+            cmd = item.get("comando")
+            if not (isinstance(cmd, list) and cmd and all(isinstance(c, str) and c for c in cmd)):
+                raise ValueError("comando do atalho precisa ser uma lista de strings")
+            if not any("{text}" in c for c in cmd):
+                mp = item.get("max_palavras", 5)
                 if isinstance(mp, bool) or not isinstance(mp, int) or mp < 1:
                     raise ValueError("max_palavras precisa ser um inteiro >= 1")
-            elif not item.get("terminal"):
-                raise ValueError("atalho precisa de terminal ou comando")
-            if "qualquer_posicao" in item and (not isinstance(item["qualquer_posicao"], bool) or "comando" not in item):
-                raise ValueError("qualquer_posicao é booleano e só vale em atalho com comando")
+            if "qualquer_posicao" in item:
+                if not isinstance(item["qualquer_posicao"], bool) or any("{text}" in c for c in cmd):
+                    raise ValueError("qualquer_posicao é booleano e só vale em atalho que não usa {text}")
 
     def model_path(self) -> Path:
         p = Path(self.model).expanduser()
@@ -114,6 +113,10 @@ class Config:
                         if normalized in seen:
                             raise ValueError(f"palavra de atalho repetida: {word}")
                         seen.add(normalized)
+            if any(route.voz for route in kw["routes"]):
+                secao = voz.VozConfig.from_dict(kw.get("voz", {}))
+                if not secao.enviar or not secao.resposta:
+                    raise ValueError("rota com voz = true precisa de [voz].enviar e [voz].resposta")
         return cls(**kw)
 
 

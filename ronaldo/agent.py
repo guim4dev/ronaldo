@@ -26,7 +26,7 @@ def login_path() -> str:
     return out.strip() or os.environ.get("PATH", "/usr/bin:/bin")
 
 
-# Restos do próprio nome que a gravação pega quando o Guima só chama "Ronaldo" (ex.: pra cortar a fala) e fica quieto.
+# Restos do próprio nome que a gravação pega quando só se chama "Ronaldo" (ex.: para interromper a fala) e fica quieto.
 RESTOS_DO_NOME = {"ronaldo", "naldo", "aldo", "do", "o"}
 
 
@@ -73,7 +73,7 @@ def _report(ok: bool, reply: str, *, notify_reply: bool, name: str, hud: bool, r
 
 
 def _comando_de_modo(text: str, *, hud: bool, req_id: int | None, name: str) -> tuple[bool, str] | None:
-    """Liga/desliga o modo voz sem chamar o rei. None quando não é comando."""
+    """Liga/desliga o modo voz sem chamar o agente. None quando não é comando."""
     from . import voz as voz_module
 
     comando = voz_module.comando_modo(text)
@@ -87,7 +87,7 @@ def _comando_de_modo(text: str, *, hud: bool, req_id: int | None, name: str) -> 
             log.exception("[%s] falha ao falar confirmação do modo voz", name)
         if hud:
             from . import hud as hud_module
-            hud_module.show("🔊 Modo voz ligado", "As respostas do rei vão ser faladas.", "ok", 6, req_id)
+            hud_module.show("🔊 Modo voz ligado", voz_module.VozConfig.load().ligado, "ok", 6, req_id)
         return True, "Modo voz ligado."
     voz_module.desligar()
     if hud:
@@ -96,17 +96,38 @@ def _comando_de_modo(text: str, *, hud: bool, req_id: int | None, name: str) -> 
     return True, "Modo texto."
 
 
-def _falar_ao_rei(template: list[str], text: str, *, path: str, timeout: float, notify_reply: bool, name: str, hud: bool, req_id: int | None) -> tuple[bool, str]:
-    """Envia a fala com --id/--json e põe a resposta do rei na fila do Falador."""
+def _falar_com_voz(text: str, *, path: str, timeout: float, notify_reply: bool, name: str, hud: bool, req_id: int | None) -> tuple[bool, str]:
+    """Envia a fala pelos comandos `[voz].enviar` e põe a resposta na fila do Falador."""
     from . import voz as voz_module
 
+    cfg = voz_module.VozConfig.load()
+    if not cfg.enviar or not cfg.resposta:
+        ok, reply = False, "O modo voz precisa de [voz].enviar e [voz].resposta no config."
+        log.info("[%s] voz: falhou: %s", name, reply)
+        _report(ok, reply, notify_reply=notify_reply, name=name, hud=hud, req_id=req_id)
+        return ok, reply
+
     oid = uuid.uuid4().hex
-    corte = template[0]
-    argv = [corte, "falar", "--id", oid, "--json", "--", text]
+    argv, faltando = voz_module.substituir(cfg.enviar, {"id": oid, "text": text})
+    if faltando:
+        ok, reply = False, f"O envio pede {voz_module.campos(faltando)}, que não tem valor."
+        log.info("[%s] voz: falhou: %s", name, reply)
+        _report(ok, reply, notify_reply=notify_reply, name=name, hud=hud, req_id=req_id)
+        return ok, reply
+
     env = {**os.environ, "PATH": path, "RONALDO_TEXT": text}
     limite = min(timeout, 60)
+    tem_texto = any("{text}" in a for a in cfg.enviar)
     try:
-        r = subprocess.run(argv, capture_output=True, text=True, timeout=limite, env=env, cwd=os.path.expanduser("~"))
+        r = subprocess.run(
+            argv,
+            input=None if tem_texto else text,
+            capture_output=True,
+            text=True,
+            timeout=limite,
+            env=env,
+            cwd=os.path.expanduser("~"),
+        )
         try:
             dados = json.loads(r.stdout) if r.stdout.strip() else {}
         except ValueError:
@@ -114,25 +135,32 @@ def _falar_ao_rei(template: list[str], text: str, *, path: str, timeout: float, 
         if not isinstance(dados, dict):
             dados = {}
         ok = r.returncode == 0 and dados.get("ok") is True
-        reino = dados.get("reino")
-        if ok and not (isinstance(reino, str) and reino):
-            ok = False
-            reply = "O corte não devolveu o reino da fala."
-        elif ok:
-            voz_module.enfileirar(reino, oid)
-            reply = f"Enviado ao rei ({reino})."
+        if ok:
+            contexto = {"id": oid}
+            for chave, valor in dados.items():
+                if isinstance(chave, str) and isinstance(valor, str):
+                    contexto[chave] = valor
+            _, faltando_resposta = voz_module.substituir(cfg.resposta, contexto)
+            texto_enviado, faltando_enviado = voz_module.formatar(cfg.enviado, contexto)
+            faltando = list(dict.fromkeys([*faltando_resposta, *faltando_enviado]))
+            if faltando:
+                ok = False
+                reply = f"O envio não devolveu {voz_module.campos(faltando)}; a resposta precisa disso."
+            else:
+                voz_module.enfileirar(oid, contexto)
+                reply = texto_enviado
         else:
             erro = dados.get("erro") or dados.get("error")
             if isinstance(erro, dict):
                 erro = erro.get("message")
             detalhe = erro or r.stderr.strip() or r.stdout.strip() or f"código {r.returncode}"
-            reply = f"O corte falhou: {detalhe}"
+            reply = f"O envio falhou: {detalhe}"
     except FileNotFoundError:
-        ok, reply = False, f"Comando não encontrado: {corte}"
+        ok, reply = False, f"Comando não encontrado: {argv[0]}"
     except subprocess.TimeoutExpired:
-        ok, reply = False, f"O corte não respondeu em {limite:.0f}s"
+        ok, reply = False, f"O envio não respondeu em {limite:.0f}s"
     except OSError as exc:
-        ok, reply = False, f"Falha ao chamar o corte: {exc}"
+        ok, reply = False, f"Falha ao chamar o envio: {exc}"
     log.info("[%s] voz: %s: %s", name, "ok" if ok else "falhou", reply)
     _report(ok, reply, notify_reply=notify_reply, name=name, hud=hud, req_id=req_id)
     return ok, reply
@@ -153,15 +181,16 @@ def run(template: list[str], text: str, *, path: str, timeout: float, notify_rep
         from . import atalhos as atalhos_module
         match = atalhos_module.casar(text, atalhos)
         if match:
-            shortcut, remainder = match
-            comando = shortcut.get("comando")
-            destino = comando[0] if comando else shortcut["terminal"]
+            shortcut, resto = match
+            comando = shortcut["comando"]
+            destino = comando[0]
             shortcut_name = shortcut.get("nome") or destino
+            encaminha = atalhos_module.tem_texto(comando)
             try:
-                if comando:
-                    status, message = atalhos_module.executar_comando(comando, path=path, nome=shortcut_name)
+                if encaminha:
+                    status, message = atalhos_module.encaminhar(comando, resto, path=path, timeout=atalhos_module.TIMEOUT_ENCAMINHO, nome=shortcut_name)
                 else:
-                    status, message = atalhos_module.entregar_terminal(shortcut["terminal"], remainder, path=path, timeout=10, nome=shortcut_name)
+                    status, message = atalhos_module.executar_comando(comando, path=path, nome=shortcut_name)
             except Exception as exc:
                 status, message = "falhou", str(exc) or type(exc).__name__
                 log.exception("[%s] exceção ao entregar atalho %s", name, shortcut_name)
@@ -171,11 +200,11 @@ def run(template: list[str], text: str, *, path: str, timeout: float, notify_rep
                 from . import hud as hud_module
                 kind = {"entregue": "ok", "sem_confirmacao": "warn", "falhou": "err"}[status]
                 prefix = {"entregue": "✅ ", "sem_confirmacao": "⚠️ ", "falhou": "❌ "}[status]
-                title = message if status != "falhou" else (f"Não rodou {shortcut_name}" if comando else f"Não entregou ao {shortcut_name}")
-                hud_module.show(prefix + title, summarize((remainder or text) if ok else message), kind, 6 if ok else 12, req_id)
+                title = message if status != "falhou" else (f"Não entregou ao {shortcut_name}" if encaminha else f"Não rodou {shortcut_name}")
+                hud_module.show(prefix + title, summarize((resto or text) if ok else message), kind, 6 if ok else 12, req_id)
             return ok, message
     if falar_resposta:
-        return _falar_ao_rei(template, text, path=path, timeout=timeout, notify_reply=notify_reply, name=name, hud=hud, req_id=req_id)
+        return _falar_com_voz(text, path=path, timeout=timeout, notify_reply=notify_reply, name=name, hud=hud, req_id=req_id)
     argv, stdin = build_argv(template, text)
     env = {**os.environ, "PATH": path, "RONALDO_TEXT": text}
     log.info("[%s] enviando para %s", name, argv[0])

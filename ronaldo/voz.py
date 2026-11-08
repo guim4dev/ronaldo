@@ -1,7 +1,8 @@
 """Modo voz: estado ligado/desligado, texto falável, motores TTS e Falador.
 
-O Falador consulta o andamento das falas no `corte` e fala cada resposta do rei
-uma única vez. Tudo é local: `say` do macOS ou Wyoming (Kokoro/Piper na LAN).
+O Falador consulta o andamento das falas no comando `resposta` do config e fala
+cada resposta uma única vez. Tudo é local: `say` do macOS ou Wyoming
+(Kokoro/Piper na LAN).
 """
 
 from __future__ import annotations
@@ -44,11 +45,9 @@ PRAZO_FALADOR = 15 * 60
 INTERVALO_FALADOR = 1.0
 TIMEOUT_RESPOSTA = 10.0
 LIMITE_FALADOS = 500
+ENVIADO_PADRAO = "Enviado."
+LIGADO_PADRAO = "As respostas vão ser faladas."
 
-
-def corte_bin() -> str:
-    """Binário do corte (RONALDO_CORTE sobrescreve; padrão: `corte` do PATH de login)."""
-    return os.environ.get("RONALDO_CORTE") or "corte"
 
 # ---------------------------------------------------------------- estado
 
@@ -176,18 +175,18 @@ def essencial(texto: str, limite: int = 300) -> str:
         total += extra
 
     if escolhidas:
-        corte = " ".join(escolhidas).rstrip(_PONTUACAO_FINAL)
-        if not corte:
+        trecho = " ".join(escolhidas).rstrip(_PONTUACAO_FINAL)
+        if not trecho:
             return ""
-        return _com_ronaldo(corte + AVISO)
+        return _com_ronaldo(trecho + AVISO)
 
-    corte = t[:teto]
-    if " " in corte:
-        corte = corte.rsplit(" ", 1)[0]
-    corte = corte.rstrip(_PONTUACAO_FINAL)
-    if not corte:
+    trecho = t[:teto]
+    if " " in trecho:
+        trecho = trecho.rsplit(" ", 1)[0]
+    trecho = trecho.rstrip(_PONTUACAO_FINAL)
+    if not trecho:
         return ""
-    return _com_ronaldo(corte + AVISO)
+    return _com_ronaldo(trecho + AVISO)
 
 
 def _com_ronaldo(texto: str) -> str:
@@ -201,6 +200,10 @@ def _com_ronaldo(texto: str) -> str:
 class VozConfig:
     motores: list[str] = field(default_factory=lambda: list(MOTORES_PADRAO))
     volume: float = VOLUME_PADRAO
+    enviar: list[str] = field(default_factory=list)
+    resposta: list[str] = field(default_factory=list)
+    enviado: str = ENVIADO_PADRAO
+    ligado: str = LIGADO_PADRAO
 
     @classmethod
     def from_dict(cls, dados: object) -> "VozConfig":
@@ -212,7 +215,14 @@ class VozConfig:
         volume = dados.get("volume")
         if isinstance(volume, bool) or not isinstance(volume, (int, float)):
             volume = VOLUME_PADRAO
-        return cls([m.strip() for m in motores], float(volume))
+        return cls(
+            [m.strip() for m in motores],
+            float(volume),
+            _argv(dados.get("enviar")),
+            _argv(dados.get("resposta")),
+            _texto(dados.get("enviado"), ENVIADO_PADRAO),
+            _texto(dados.get("ligado"), LIGADO_PADRAO),
+        )
 
     @classmethod
     def load(cls, path: Path | None = None) -> "VozConfig":
@@ -222,6 +232,47 @@ class VozConfig:
         except (OSError, tomllib.TOMLDecodeError):
             return cls()
         return cls.from_dict(dados.get("voz", {}))
+
+
+def _argv(valor: object) -> list[str]:
+    if isinstance(valor, list) and valor and all(isinstance(a, str) and a for a in valor):
+        return list(valor)
+    return []
+
+
+def _texto(valor: object, padrao: str) -> str:
+    return valor.strip() if isinstance(valor, str) and valor.strip() else padrao
+
+
+# ---------------------------------------------------------------- placeholders
+
+
+_PLACEHOLDER = re.compile(r"\{([a-zA-Z_][\w-]*)\}")
+
+
+def campos(nomes: list[str]) -> str:
+    return ", ".join("{" + nome + "}" for nome in nomes)
+
+
+def substituir(template: list[str], valores: dict[str, str]) -> tuple[list[str], list[str]]:
+    """Troca {nome} pelos valores; devolve o argv e os nomes que ficaram sem valor."""
+    faltando: list[str] = []
+    argv: list[str] = []
+    for item in template:
+        for nome in _PLACEHOLDER.findall(item):
+            if nome not in valores and nome not in faltando:
+                faltando.append(nome)
+        argv.append(_PLACEHOLDER.sub(lambda m: valores.get(m.group(1), m.group(0)), item))
+    return argv, faltando
+
+
+def formatar(template: str, valores: dict[str, str]) -> tuple[str, list[str]]:
+    """Troca {nome} no texto; devolve o texto e os nomes que ficaram sem valor."""
+    faltando: list[str] = []
+    for nome in _PLACEHOLDER.findall(template):
+        if nome not in valores and nome not in faltando:
+            faltando.append(nome)
+    return _PLACEHOLDER.sub(lambda m: valores.get(m.group(1), m.group(0)), template), faltando
 
 
 # ---------------------------------------------------------------- motores
@@ -430,7 +481,7 @@ def falar_texto(
     return False
 
 
-# ---------------------------------------------------------------- corte
+# ---------------------------------------------------------------- resposta
 
 
 _caminho_login: str | None = None
@@ -443,10 +494,17 @@ def _path_login() -> str:
     return _caminho_login
 
 
-def consultar_resposta(id: str, reino: str, *, path: str | None = None, timeout: float = TIMEOUT_RESPOSTA) -> dict:
-    """Roda `corte --reino <k> resposta <id> --json` e devolve o JSON."""
+def consultar_resposta(id: str, contexto: dict | None = None, *, path: str | None = None, timeout: float = TIMEOUT_RESPOSTA) -> dict:
+    """Roda o comando `[voz].resposta` do config e devolve o JSON."""
+    cfg = VozConfig.load()
+    if not cfg.resposta:
+        raise RuntimeError("config sem [voz].resposta")
+    valores = {k: v for k, v in (contexto or {}).items() if isinstance(k, str) and isinstance(v, str)}
+    valores["id"] = str(id)
+    argv, faltando = substituir(cfg.resposta, valores)
+    if faltando:
+        raise RuntimeError(f"a resposta pede {campos(faltando)}, que não veio no envio")
     env = {**os.environ, "PATH": path or _path_login()}
-    argv = [corte_bin(), "--reino", str(reino), "resposta", str(id), "--json"]  # --reino é opção global do corte
     resultado = subprocess.run(
         argv,
         capture_output=True,
@@ -460,7 +518,7 @@ def consultar_resposta(id: str, reino: str, *, path: str | None = None, timeout:
         raise RuntimeError(detalhe)
     dados = json.loads(resultado.stdout)
     if not isinstance(dados, dict):
-        raise ValueError("resposta do corte não é um objeto")
+        raise ValueError("a resposta não é um objeto")
     return dados
 
 
@@ -469,13 +527,13 @@ def consultar_resposta(id: str, reino: str, *, path: str | None = None, timeout:
 
 @dataclass
 class _Pendente:
-    reino: str
     id: str
+    contexto: dict
     quando: float
 
 
 class Falador:
-    """Consulta o corte a cada segundo e fala cada resposta pronta uma vez."""
+    """Consulta o comando `resposta` a cada segundo e fala cada resposta pronta uma vez."""
 
     def __init__(
         self,
@@ -565,19 +623,20 @@ class Falador:
                 self.esvaziar()
             self._parar_thread.wait(self.intervalo)
 
-    def enfileirar(self, reino: str, id: str, quando: float | None = None) -> bool:
-        if not reino or not id:
+    def enfileirar(self, id: str, contexto: dict | None = None, quando: float | None = None) -> bool:
+        if not id:
             return False
+        contexto = dict(contexto or {})
         with self._lock:
             if id in self._ids or any(p.id == id for p in self._fila):
                 return False
-            self._fila.append(_Pendente(str(reino), str(id), self.relogio() if quando is None else quando))
+            self._fila.append(_Pendente(str(id), contexto, self.relogio() if quando is None else quando))
         self.iniciar()
         return True
 
-    def pendentes(self) -> list[tuple[str, str]]:
+    def pendentes(self) -> list[tuple[str, dict]]:
         with self._lock:
-            return [(p.reino, p.id) for p in self._fila]
+            return [(p.id, dict(p.contexto)) for p in self._fila]
 
     # -- fala
 
@@ -590,7 +649,7 @@ class Falador:
             self._parar_thread.wait(self.intervalo)
 
     def passo(self) -> None:
-        """Um ciclo: resolve a fila, consulta o corte e fala o que ficou pronto."""
+        """Um ciclo: resolve a fila, consulta o serviço de respostas e fala o que ficou pronto."""
         if not self._ligado_fn():
             self.esvaziar()
             return
@@ -606,14 +665,14 @@ class Falador:
                     expirados.append(item)
             pendentes = list(self._fila)
         for item in expirados:
-            log.warning("voz: descartado por prazo reino=%s id=%s", item.reino, item.id)
+            log.warning("voz: descartado por prazo id=%s", item.id)
 
         prontos: list[tuple[_Pendente, str, object]] = []
         for item in pendentes:
             try:
-                resposta = self.consultar(item.id, item.reino)
+                resposta = self.consultar(item.id, item.contexto)
             except Exception as exc:  # noqa: BLE001 - tenta de novo no próximo ciclo
-                log.warning("voz: falha ao consultar reino=%s id=%s: %s", item.reino, item.id, exc)
+                log.warning("voz: falha ao consultar id=%s: %s", item.id, exc)
                 continue
             if not isinstance(resposta, dict) or resposta.get("estado") != "pronta":
                 continue
@@ -641,7 +700,7 @@ class Falador:
 
     def _falar_pronto(self, item: _Pendente, texto: str, em: object, cancelar: int) -> None:
         fala = essencial(texto)
-        log.info("voz: resposta pronta reino=%s id=%s em=%s", item.reino, item.id, em)
+        log.info("voz: resposta pronta id=%s em=%s", item.id, em)
         if not fala:
             with self._lock:
                 self._atual = None
@@ -673,7 +732,7 @@ class Falador:
             self._atual = None
 
     def falar_agora(self, texto: str) -> bool:
-        """Confirmação curta, fora da fila e sem consultar o corte."""
+        """Confirmação curta, fora da fila e sem consultar o serviço de respostas."""
         fala = essencial(texto)
         if not fala:
             return False
@@ -723,8 +782,8 @@ def falador() -> Falador:
         return _FALADOR
 
 
-def enfileirar(reino: str, id: str, quando: float | None = None) -> bool:
-    return falador().enfileirar(reino, id, quando)
+def enfileirar(id: str, contexto: dict | None = None, quando: float | None = None) -> bool:
+    return falador().enfileirar(id, contexto, quando)
 
 
 def parar() -> None:
