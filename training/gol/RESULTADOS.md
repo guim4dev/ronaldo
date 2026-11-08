@@ -110,6 +110,8 @@ positivo, não um falso alarme.
 5. **Alcance.** Os numeros provam vozes sinteticas e narradores reais. **Nao
    provam a voz do Guima**: isso depende do teste ao vivo
    (`tools/grito_ao_vivo.py`, 10 gritos + 2 min de conversa, nada gravado).
+   As metas de acerto e de FA/h em jogo nao foram batidas: o deploy deve
+   esperar a aceitacao ao vivo ou uma ordem explicita do Guima.
 
 ## Treino e escolha do modelo
 
