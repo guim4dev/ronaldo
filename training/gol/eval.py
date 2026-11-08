@@ -44,18 +44,26 @@ import modelo as M  # noqa: E402
 log = logging.getLogger("gol.eval")
 
 LIMIARES = [0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
-CATEGORIAS = (
-    ("speech_ptbr", "conversa"),
-    ("game", "jogo"),
-    ("music", "musica"),
-)
 METAS = {"acerto": 0.85, "fa_conversa": 0.5, "fa_jogo_musica": 0.2}
+NOMES = {"speech_ptbr": "conversa_mls", "game": "jogo", "music": "musica"}
 
 
-# --------------------------------------------------------------------------- #
-# streams
-# --------------------------------------------------------------------------- #
+def _nome_amigavel(bruto: str) -> str:
+    return NOMES.get(bruto, bruto)
+
+
+def _grupo(nome: str) -> str:
+    if "conversa" in nome or "speech" in nome:
+        return "conversa"
+    if nome == "jogo" or nome.startswith("game"):
+        return "jogo"
+    if nome == "musica" or nome.startswith("music"):
+        return "musica"
+    return "outro"
+
+
 def avaliar_validacao(sessao, caminho: Path, limiares: list[float]) -> dict:
+    """FA/h no validation_set_features.npy (sem RMS: o portao nao e simulavel)."""
     feats = np.load(caminho, mmap_mode="r")
     if feats.ndim == 3:  # aceita [N,16,96] por completude
         feats = np.asarray(feats).reshape(-1, feats.shape[-1])
@@ -72,16 +80,35 @@ def avaliar_validacao(sessao, caminho: Path, limiares: list[float]) -> dict:
     return saida
 
 
+def descobrir_streams(dados: Path) -> list[tuple[str, Path, Path, dict]]:
+    """Acha todo stream_*_avaliacao_features.npy com o _rms correspondente.
+
+    A categoria nova (ex.: conversa de futebol multi-falante) entra sozinha:
+    basta o par `stream_<nome>_avaliacao_{features,rms}.npy` existir. O meta e
+    opcional (a avaliacao so precisa de chunks, RMS e, se houver, o numero de
+    fontes).
+    """
+    pasta = dados / "features"
+    itens = []
+    for feat_p in sorted(pasta.glob("stream_*_avaliacao_features.npy")):
+        bruto = feat_p.name[len("stream_") : -len("_avaliacao_features.npy")]
+        rms_p = pasta / f"stream_{bruto}_avaliacao_rms.npy"
+        if not rms_p.exists():
+            log.warning("stream %s: sem %s; ignorando", feat_p.name, rms_p.name)
+            continue
+        meta_p = pasta / f"stream_{bruto}_avaliacao_meta.json"
+        meta = json.loads(meta_p.read_text(encoding="utf-8")) if meta_p.exists() else {}
+        itens.append((bruto, feat_p, rms_p, meta))
+    return itens
+
+
 def avaliar_streams(sessao, dados: Path, limiares: list[float], PortaoGrito) -> dict:
     saida = {}
-    for categoria, nome in CATEGORIAS:
-        feat_p = dados / "features" / f"stream_{categoria}_avaliacao_features.npy"
-        rms_p = dados / "features" / f"stream_{categoria}_avaliacao_rms.npy"
-        meta_p = dados / "features" / f"stream_{categoria}_avaliacao_meta.json"
-        for p in (feat_p, rms_p, meta_p):
-            if not p.exists():
-                raise SystemExit(f"falta {p} (rode features.py --streaming)")
-        meta = json.loads(meta_p.read_text(encoding="utf-8"))
+    itens = descobrir_streams(dados)
+    if not itens:
+        raise SystemExit(f"nenhum stream_*_avaliacao_features.npy em {dados / 'features'}")
+    for bruto, feat_p, rms_p, meta in itens:
+        nome = _nome_amigavel(bruto)
         feats = np.load(feat_p, mmap_mode="r")
         rms = np.load(rms_p, mmap_mode="r")
         # O conversor paralelo nao registra a ordem da concatenacao dos
@@ -89,28 +116,29 @@ def avaliar_streams(sessao, dados: Path, limiares: list[float], PortaoGrito) -> 
         t0 = time.time()
         resultado = M.avaliar_stream(sessao, feats, rms, None, limiares, PortaoGrito)
         resultado["categoria"] = nome
+        resultado["arquivo"] = feat_p.name
         resultado["arquivos"] = int(meta.get("fontes", 0))
         resultado["segundos"] = round(time.time() - t0, 1)
         saida[nome] = resultado
-        log.info(
+        log.warning(
             "%s: %.2f h, %d chunks (%.0fs)",
             nome, resultado["horas"], resultado["chunks"], resultado["segundos"],
         )
     return saida
 
 
-def combinar(saida_a: dict, saida_b: dict, limiares: list[float]) -> dict:
-    horas = saida_a["horas"] + saida_b["horas"]
-    combinado = {"horas": round(horas, 4), "chunks": saida_a["chunks"] + saida_b["chunks"], "por_limiar": {}}
+def combinar(saidas: list[dict], limiares: list[float]) -> dict:
+    """Soma disparos e horas de varios streams do mesmo grupo."""
+    if not saidas:
+        return {"horas": 0.0, "chunks": 0, "por_limiar": {}}
+    horas = sum(s["horas"] for s in saidas)
+    combinado = {"horas": round(horas, 4), "chunks": sum(s["chunks"] for s in saidas), "por_limiar": {}}
     for limiar in limiares:
-        a = saida_a["por_limiar"][limiar]
-        b = saida_b["por_limiar"][limiar]
-        item = {"sem": {"disparos": a["sem"]["disparos"] + b["sem"]["disparos"]},
-                "com": {"disparos": a["com"]["disparos"] + b["com"]["disparos"]}}
+        item = {}
         for modo in ("sem", "com"):
-            k = item[modo]["disparos"]
+            k = sum(s["por_limiar"][limiar][modo]["disparos"] for s in saidas)
             taxa, limite = M.fa_por_hora(k, horas)
-            item[modo].update({"fa_h": taxa, "limite95": limite})
+            item[modo] = {"disparos": k, "fa_h": taxa, "limite95": limite}
         combinado["por_limiar"][limiar] = item
     return combinado
 
@@ -222,7 +250,7 @@ def escolher_limiar(resultado: dict, limiares: list[float]) -> dict:
     for limiar in limiares:
         acertos, total = acerto_total(resultado["clipes"], limiar)
         acerto = acertos / total if total else 0.0
-        fa_conv = resultado["streams"]["conversa"]["por_limiar"][limiar]["com"]["fa_h"]
+        fa_conv = resultado["conversa"]["por_limiar"][limiar]["com"]["fa_h"]
         fa_jm = resultado["jogo_musica"]["por_limiar"][limiar]["com"]["fa_h"]
         metas = {
             "acerto": acerto >= METAS["acerto"],
@@ -239,6 +267,8 @@ def escolher_limiar(resultado: dict, limiares: list[float]) -> dict:
             "metas": metas,
             "cumpriu": sum(metas.values()),
         })
+    # A meta de conversa vale para o conjunto somado (MLS + futebol); cada
+    # conjunto aparece na tabela e o pior tambem e reportado no relatorio.
     viaveis = [x for x in linhas if x["cumpriu"] == 3]
     if viaveis:
         escolhido = max(viaveis, key=lambda x: (x["acerto"], -x["fa_conversa"] - x["fa_jogo_musica"]))
@@ -260,11 +290,18 @@ def _fmt_acc(item) -> str:
     return f"{100 * item['taxa']:.1f}% ({item['acertos']}/{item['clipes'] if 'clipes' in item else '-'})"
 
 
+def _ordem_streams(nomes: list[str]) -> list[str]:
+    preferencia = ["conversa_mls", "jogo", "musica"]
+    resto = sorted(n for n in nomes if n not in preferencia)
+    return [n for n in preferencia if n in nomes] + resto
+
+
 def tabela_markdown(resultado: dict, limiares: list[float], com_portao: bool) -> str:
     modo = "com" if com_portao else "sem"
-    cab = ("| limiar | sintetico limpo | sintetico ruido | narradores reais | total | "
-           "validation (11 h) | conversa | jogo | musica | jogo+musica |")
-    linhas = [cab, "|---|---|---|---|---|---|---|---|---|---|"]
+    nomes = _ordem_streams(list(resultado["streams"]))
+    cab = ["limiar", "sintetico limpo", "sintetico ruido", "narradores reais", "total",
+           "validation", *nomes, "jogo+musica"]
+    linhas = ["| " + " | ".join(cab) + " |", "|" + "---|" * len(cab)]
     for limiar in limiares:
         c = resultado["clipes"]
         def acerto(chave):
@@ -275,15 +312,14 @@ def tabela_markdown(resultado: dict, limiares: list[float], com_portao: bool) ->
         total_txt = f"{100 * acertos / total:.1f}% ({acertos}/{total})" if total else "n/d"
         val = resultado["validacao"]["por_limiar"][limiar][modo]
         val_txt = "n/d" if val is None else _fmt_fa(val)
-        conv = resultado["streams"]["conversa"]["por_limiar"][limiar][modo]
-        jogo = resultado["streams"]["jogo"]["por_limiar"][limiar][modo]
-        mus = resultado["streams"]["musica"]["por_limiar"][limiar][modo]
-        jm = resultado["jogo_musica"]["por_limiar"][limiar][modo]
-        linhas.append(
-            f"| {limiar:.2f} | {acerto('sintetico_limpo')} | {acerto('sintetico_ruido')} | "
-            f"{acerto('narradores')} | {total_txt} | {val_txt} | {_fmt_fa(conv)} | "
-            f"{_fmt_fa(jogo)} | {_fmt_fa(mus)} | {_fmt_fa(jm)} |"
-        )
+        celulas = [
+            f"{limiar:.2f}", acerto("sintetico_limpo"), acerto("sintetico_ruido"), acerto("narradores"),
+            total_txt, val_txt,
+        ]
+        for nome in nomes:
+            celulas.append(_fmt_fa(resultado["streams"][nome]["por_limiar"][limiar][modo]))
+        celulas.append(_fmt_fa(resultado["jogo_musica"]["por_limiar"][limiar][modo]))
+        linhas.append("| " + " | ".join(celulas) + " |")
     return "\n".join(linhas)
 
 
@@ -319,6 +355,29 @@ def markdown_completo(resultado: dict, escolha: dict) -> str:
     validacao = resultado["validacao"]
     streams = resultado["streams"]
     c = resultado["clipes"]
+    linhas_streams = []
+    for nome in _ordem_streams(list(streams)):
+        s = streams[nome]
+        arquivo = s.get("arquivo", "")
+        linhas_streams.append(
+            f"| {nome} | {s['horas']:.2f} h | {s.get('arquivos', 0)} arquivo(s) | `{arquivo}` |"
+        )
+    tabela_conjuntos_streams = "\n".join(linhas_streams)
+    fa_pior = max(
+        (streams[n]["por_limiar"][e["limiar"]]["com"]["fa_h"] for n in streams
+         if _grupo(n) == "conversa"),
+        default=float("nan"),
+    )
+    pior_nome = "n/d"
+    for n in streams:
+        if _grupo(n) == "conversa" and streams[n]["por_limiar"][e["limiar"]]["com"]["fa_h"] == fa_pior:
+            pior_nome = n
+            break
+    linhas_conversa = "\n".join(
+        f"  - {n}: {streams[n]['por_limiar'][e['limiar']]['com']['fa_h']:.2f} FA/h com portao "
+        f"({streams[n]['horas']:.2f} h)"
+        for n in _ordem_streams(list(streams)) if _grupo(n) == "conversa"
+    )
     texto = f"""# Resultados do `gol_grito`
 
 Gerado por `uv run python eval.py --resumo --markdown RESULTADOS.md` em
@@ -330,7 +389,7 @@ Gerado por `uv run python eval.py --resumo --markdown RESULTADOS.md` em
 | meta | valor | alvo | resultado |
 |---|---|---|---|
 | acerto nos gritos de teste (com portao) | {100 * e["acerto"]:.1f}% ({e["acertos"]}/{e["total"]}) | >= 85% | {meta(e["metas"]["acerto"])} |
-| FA/h conversa pt-BR (com portao) | {e["fa_conversa"]:.2f} | <= 0,5 | {meta(e["metas"]["fa_conversa"])} |
+| FA/h conversa pt-BR (com portao, todos os conjuntos) | {e["fa_conversa"]:.2f} | <= 0,5 | {meta(e["metas"]["fa_conversa"])} |
 | FA/h jogo+musica (com portao) | {e["fa_jogo_musica"]:.2f} | <= 0,2 | {meta(e["metas"]["fa_jogo_musica"])} |
 | metas cumpridas | {e["cumpriu"]}/3 | 3/3 | {"OK" if e["cumpriu"] == 3 else "parcial"} |
 
@@ -356,9 +415,7 @@ contados; limite superior unilateral de 95% Poisson.
 | sintetico limpo | {c["sintetico_limpo"]["clipes"]} | pos_test, vozes reservadas (Piper jeff + edge-tts), sem ruido |
 | sintetico ruido | {c["sintetico_ruido"]["clipes"]} | pos_test com ruido de jogo (SNR 0-20 dB) |
 | narradores reais | {c["narradores"]["clipes"]} | `raw/gol_real/clips` (videos publicos, uso local) |
-| conversa pt-BR | {streams["conversa"]["horas"]:.2f} h | `stream_speech_ptbr_avaliacao_features.npy` |
-| jogo | {streams["jogo"]["horas"]:.2f} h | `stream_game_avaliacao_features.npy` |
-| musica | {streams["musica"]["horas"]:.2f} h | `stream_music_avaliacao_features.npy` |
+{tabela_conjuntos_streams}
 | validation openWakeWord | {validacao["horas"]:.2f} h | `validation_set_features.npy` |
 | fala normal com "gol" | {resultado["negativos_fala"]["clipes"]} clipes | amostra de `work/neg_train` (tipo fala_normal) |
 | palavras curtas gritadas | {resultado["negativos_grito"]["clipes"]} clipes | amostra de `work/neg_train` (tipo palavra_gritada) |
@@ -373,6 +430,11 @@ contados; limite superior unilateral de 95% Poisson.
 - FA/h observada com portao no limiar sugerido: conversa {e["fa_conversa"]:.2f}
   ({meta(e["metas"]["fa_conversa"])} a meta de 0,5), jogo+musica {e["fa_jogo_musica"]:.2f}
   ({meta(e["metas"]["fa_jogo_musica"])} a meta de 0,2).
+  Por conjunto de conversa (o pior e `{pior_nome}`, {fa_pior:.2f} FA/h):
+{linhas_conversa}
+- **Conversa MLS e de um falante so.** A conversa de futebol multi-falante entrou
+  como conjunto proprio para medir a generalizacao entre falantes; a meta de
+  conversa vale para a soma dos conjuntos.
 - Fala normal com "gol" no nivel da referencia: o portao barra
   {resultado["negativos_fala"]["por_limiar"][e["limiar"]]["com"]["disparos"]} de
   {resultado["negativos_fala"]["por_limiar"][e["limiar"]]["sem"]["disparos"]} clipes que o
@@ -449,7 +511,11 @@ def main() -> None:
     )
     log.warning("avaliacao: streams de avaliacao")
     streams = avaliar_streams(sessao, dados, limiares, PortaoGrito)
-    jogo_musica = combinar(streams["jogo"], streams["musica"], limiares)
+    conversas = [v for k, v in streams.items() if _grupo(k) == "conversa"]
+    jogo_musica = combinar(
+        [v for k, v in streams.items() if _grupo(k) in ("jogo", "musica")], limiares
+    )
+    conversa = combinar(conversas, limiares)
 
     log.warning("avaliacao: clipes de teste")
     receitas_p = dados / "work" / "pos_test" / "receitas.json"
@@ -481,6 +547,7 @@ def main() -> None:
         "limiares": limiares,
         "validacao": validacao,
         "streams": streams,
+        "conversa": conversa,
         "jogo_musica": jogo_musica,
         "clipes": clipes,
         "negativos_fala": neg_fala,
