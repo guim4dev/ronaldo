@@ -913,7 +913,7 @@ def test_cli_uso_invalido(capsys):
 
 
 def test_parar_durante_sintese_wyoming_nao_toca(monkeypatch, tmp_path):
-    """Achado do conselheiro: parar() durante a síntese (sem processo de áudio ainda) não pode deixar o áudio tocar."""
+    """Regressão: parar() durante a síntese (sem processo de áudio ainda) não pode deixar o áudio tocar."""
     audio = tmp_path / "a.wav"
     audio.write_bytes(b"x")
     liberar = threading.Event()
