@@ -25,6 +25,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import math
 import sys
 import time
 from pathlib import Path
@@ -115,6 +116,14 @@ def carregar_dados(dados: Path, val_frac: float, seed: int) -> dict:
 # --------------------------------------------------------------------------- #
 # rede
 # --------------------------------------------------------------------------- #
+def _lr_cosine(passo: int, total: int, base: float, aquecimento: int = 100) -> float:
+    """Warmup curto + cosine ate 5% do LR (como o openWakeWord)."""
+    if passo < aquecimento:
+        return base * (0.05 + 0.95 * passo / max(1, aquecimento))
+    prog = min(1.0, (passo - aquecimento) / max(1, total - aquecimento))
+    return base * (0.05 + 0.95 * 0.5 * (1.0 + math.cos(math.pi * prog)))
+
+
 def criar_rede(camada: int, blocos: int):
     import torch
     import torch.nn as nn
@@ -306,6 +315,10 @@ def main() -> None:
     ap.add_argument("--lote-acav", type=int, default=512)
     ap.add_argument("--lote-stream", type=int, default=256)
     ap.add_argument("--lr", type=float, default=5e-4)
+    ap.add_argument("--agenda-lr", choices=["cosine", "fixo"], default="cosine")
+    ap.add_argument("--mineracao", dest="mineracao", action="store_true", default=True,
+                    help="so negativos dificeis e positivos nao aprendidos (openWakeWord)")
+    ap.add_argument("--sem-mineracao", dest="mineracao", action="store_false")
     ap.add_argument("--peso-negativo-max", type=float, default=200.0)
     ap.add_argument("--camada", type=int, default=32)
     ap.add_argument("--blocos", type=int, default=1)
@@ -364,6 +377,9 @@ def main() -> None:
             passo_global = (epoca - 1) * passos + passo
             fracao = passo_global / max(1, total_passos - 1)
             peso_neg = 1.0 + (args.peso_negativo_max - 1.0) * fracao
+            if args.agenda_lr == "cosine":
+                for grupo in otimizador.param_groups:
+                    grupo["lr"] = _lr_cosine(passo_global, total_passos, args.lr)
             x, y, w = montar_lote(d, args, rng)
             w[args.lote_pos :] = peso_neg
             xt = torch.from_numpy(x)
@@ -371,6 +387,14 @@ def main() -> None:
             wt = torch.from_numpy(w)
             otimizador.zero_grad(set_to_none=True)
             pred = rede(xt).reshape(-1)
+            if args.mineracao:
+                # openWakeWord: so negativos dificeis e positivos ainda nao aprendidos
+                with torch.no_grad():
+                    mascara = ((yt == 0) & (pred >= 0.001)) | ((yt == 1) & (pred < 0.999))
+                if int(mascara.sum()) >= 32:
+                    pred = pred[mascara]
+                    yt = yt[mascara]
+                    wt = wt[mascara]
             perda = perda_fn(torch.clamp(pred, 1e-6, 1 - 1e-6), yt, weight=wt)
             perda.backward()
             torch.nn.utils.clip_grad_norm_(rede.parameters(), 5.0)
