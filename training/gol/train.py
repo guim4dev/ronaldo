@@ -122,9 +122,12 @@ class PositivosAlinhados:
         self.treino_idx = [usaveis[j] for j in ordem[n_val:]]
         self.com_pos = [i for i in usaveis]
         self.com_neg = [i for i in range(len(itens)) if self.negativas[i]]
+        self.e_real = np.asarray([it.get("origem") == "real" for it in itens], dtype=bool)
+        self.real_treino = [i for i in self.treino_idx if self.e_real[i]]
+        self.sint_treino = [i for i in self.treino_idx if not self.e_real[i]]
         log.info(
-            "alinhado: %d clipes (%d com janela positiva), val=%d, media pos=%.1f neg=%.1f",
-            len(itens), len(usaveis), len(self.val_idx),
+            "alinhado: %d clipes (%d com janela positiva, %d reais), val=%d, media pos=%.1f neg=%.1f",
+            len(itens), len(usaveis), int(self.e_real.sum()), len(self.val_idx),
             float(np.mean([len(self.positivas[i]) for i in usaveis])),
             float(np.mean([len(self.negativas[i]) for i in self.com_neg])),
         )
@@ -133,7 +136,8 @@ class PositivosAlinhados:
         off = int(self.offsets[i])
         return np.asarray(self.stream[off + k - (M.JANELA - 1) : off + k + 1], dtype=np.float32)
 
-    def amostrar(self, n: int, rng: np.random.Generator, frac_neg: float = 0.25):
+    def amostrar(self, n: int, rng: np.random.Generator, frac_neg: float = 0.25,
+                 frac_real: float = 0.0):
         xs, ys = [], []
         for _ in range(n):
             negativo = rng.random() < frac_neg
@@ -144,7 +148,11 @@ class PositivosAlinhados:
                 k = ks[max(0, len(ks) - 1 - int(rng.integers(0, min(5, len(ks)))))]
                 ys.append(0.0)
             else:
-                i = self.treino_idx[int(rng.integers(0, len(self.treino_idx)))]
+                if self.real_treino and rng.random() < frac_real:
+                    i = self.real_treino[int(rng.integers(0, len(self.real_treino)))]
+                else:
+                    base = self.sint_treino or self.treino_idx
+                    i = base[int(rng.integers(0, len(base)))]
                 ks = self.positivas[i]
                 # prioriza a janela em que o fim da palavra cai no fim dela
                 # (delay 0), que e o caso dos clipes de teste de 2 s
@@ -320,7 +328,8 @@ def montar_lote(d: dict, args, rng: np.random.Generator) -> tuple[np.ndarray, np
         n_antigo = int(round(args.lote_pos * args.pos_antigo_frac)) if d["pos"] is not None else 0
         n_alinhado = args.lote_pos - n_antigo
         if n_alinhado > 0:
-            x_pos, y_pos = d["alinhado"].amostrar(n_alinhado, rng, args.frac_janela_negativa)
+            x_pos, y_pos = d["alinhado"].amostrar(
+                n_alinhado, rng, args.frac_janela_negativa, args.frac_real_positivo)
             partes_x.append(x_pos); partes_y.append(y_pos)
         if n_antigo > 0:
             idx = rng.choice(d["pos_treino"], size=n_antigo, replace=True)
@@ -481,6 +490,8 @@ def main() -> None:
                     help="fracao do lote de positivos alinhados que vira janela antes da palavra")
     ap.add_argument("--pos-antigo-frac", type=float, default=0.0,
                     help="fracao do lote de positivos vinda do pos_train.npy antigo (janela final)")
+    ap.add_argument("--frac-real-positivo", type=float, default=0.0,
+                    help="fracao dos positivos alinhados vinda do real_train (gritos humanos)")
     ap.add_argument("--lote-game-hard", type=int, default=128,
                     help="negativos dificeis minerados do stream de treino de jogo")
     ap.add_argument("--lote-neg", type=int, default=64)
