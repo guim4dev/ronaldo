@@ -1,0 +1,23 @@
+[project]
+name = "gol-treino-dados"
+version = "0.1.0"
+description = "Preparo dos dados (audio -> features openWakeWord) do modelo gol_grito. Nao treina o modelo."
+requires-python = ">=3.12"
+dependencies = [
+    "numpy>=2.1",
+    "onnxruntime>=1.20",
+    "scipy>=1.14",
+    "soundfile>=0.12",
+    "tqdm>=4.66",
+    "datasets>=3.0",
+    "huggingface-hub>=0.26",
+    "edge-tts>=7.0",
+]
+
+[tool.uv]
+package = false
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2.0",
+]
