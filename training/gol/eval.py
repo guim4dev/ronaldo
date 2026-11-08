@@ -281,9 +281,10 @@ def avaliar_features_curtas(sessao, caminho: Path, limiares: list[float], Portao
     saida = {"clipes": int(len(notas)), "segundos": 0.0, "por_limiar": {}}
     for limiar in limiares:
         sem = notas >= limiar
+        ic95 = intervalo_wilson(int(sem.sum()), len(sem))
         saida["por_limiar"][limiar] = {
-            "sem": {"acertos": int(sem.sum()), "taxa": float(sem.mean())},
-            "com": {"acertos": int(sem.sum()), "taxa": float(sem.mean())},
+            "sem": {"acertos": int(sem.sum()), "taxa": float(sem.mean()), "ic95_wilson": ic95},
+            "com": {"acertos": int(sem.sum()), "taxa": float(sem.mean()), "ic95_wilson": ic95},
             "ultima": {"acertos": int(sem.sum()), "taxa": float(sem.mean())},
         }
     return saida
@@ -338,6 +339,18 @@ def selecionar_clipes(dados: Path, tipo: str | None, limite: int, seed: int = 7)
 # --------------------------------------------------------------------------- #
 # escolha do limiar e relatorio
 # --------------------------------------------------------------------------- #
+def intervalo_wilson(acertos: int, total: int, z: float = 1.96) -> tuple[float, float]:
+    """Intervalo bilateral de 95% de Wilson para proporcao observada."""
+    if total <= 0:
+        return float("nan"), float("nan")
+    p = acertos / total
+    z2 = z * z
+    denominador = 1.0 + z2 / total
+    centro = (p + z2 / (2.0 * total)) / denominador
+    margem = z / denominador * math.sqrt(p * (1.0 - p) / total + z2 / (4.0 * total * total))
+    return max(0.0, centro - margem), min(1.0, centro + margem)
+
+
 def acerto_total(clipes: dict, limiar: float) -> tuple[int, int]:
     acertos = sum(c["por_limiar"][limiar]["com"]["acertos"] for c in clipes.values())
     total = sum(c["clipes"] for c in clipes.values())
@@ -413,7 +426,11 @@ def tabela_markdown(resultado: dict, limiares: list[float], com_portao: bool) ->
         def acerto(chave):
             item = dict(c[chave]["por_limiar"][limiar][modo])
             item["clipes"] = c[chave]["clipes"]
-            return _fmt_acc(item)
+            texto = _fmt_acc(item)
+            if chave == "real_teste" and item.get("ic95_wilson"):
+                baixo, alto = item["ic95_wilson"]
+                texto += f" (IC95 Wilson {100 * baixo:.1f}–{100 * alto:.1f}%)"
+            return texto
         acertos, total = acerto_total(c, limiar)
         total_txt = f"{100 * acertos / total:.1f}% ({acertos}/{total})" if total else "n/d"
         val = resultado["validacao"]["por_limiar"][limiar][modo]

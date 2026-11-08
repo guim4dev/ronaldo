@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import sys
 from pathlib import Path
 
@@ -55,3 +56,11 @@ def test_split_real_por_video_nao_separa_clipes_do_mesmo_video() -> None:
     assert set(treino).isdisjoint(validacao)
     assert (0 in treino) == (1 in treino)
     assert (0 in validacao) == (1 in validacao)
+
+
+def test_intervalo_wilson_cobre_taxa_observada_e_limites() -> None:
+    baixo, alto = E.intervalo_wilson(10, 17)
+    assert baixo < 10 / 17 < alto
+    assert E.intervalo_wilson(0, 17)[0] == 0.0
+    assert E.intervalo_wilson(17, 17)[1] == 1.0
+    assert all(math.isnan(x) for x in E.intervalo_wilson(0, 0))
