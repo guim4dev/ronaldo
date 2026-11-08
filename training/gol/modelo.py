@@ -100,26 +100,32 @@ def segmentos_do_meta(meta: dict, dados: Path | str, categoria_bruta: str) -> li
     """
     import soundfile as sf
 
-    pasta = Path(dados) / "raw" / categoria_bruta / "wav"
-    contagens = []
-    for nome in meta.get("arquivos", []):
-        caminho = pasta / nome
-        if not caminho.exists():
-            log.warning("stream %s: %s sumiu; usando um segmento unico", categoria_bruta, caminho)
+    raiz = Path(dados) / "raw" / categoria_bruta
+    nomes = list(meta.get("arquivos", []))
+    for pasta in (raiz / "wav", raiz):
+        if nomes and not (pasta / nomes[0]).exists():
+            continue
+        contagens = []
+        for nome in nomes:
+            caminho = pasta / nome
+            if not caminho.exists():
+                log.warning("stream %s: %s sumiu; usando um segmento unico", categoria_bruta, caminho)
+                return [(0, int(meta["chunks"]))]
+            info = sf.info(str(caminho))
+            contagens.append(int(info.frames) // CHUNK)
+        total = sum(contagens)
+        if total != int(meta["chunks"]):
+            log.warning(
+                "stream %s: soma dos arquivos %d != meta %d; usando um segmento unico",
+                categoria_bruta,
+                total,
+                meta["chunks"],
+            )
             return [(0, int(meta["chunks"]))]
-        info = sf.info(str(caminho))
-        contagens.append(int(info.frames) // CHUNK)
-    total = sum(contagens)
-    if total != int(meta["chunks"]):
-        log.warning(
-            "stream %s: soma dos arquivos %d != meta %d; usando um segmento unico",
-            categoria_bruta,
-            total,
-            meta["chunks"],
-        )
-        return [(0, int(meta["chunks"]))]
-    limites = np.cumsum([0] + contagens).astype(np.int64)
-    return [(int(a), int(b)) for a, b in zip(limites[:-1], limites[1:]) if b > a]
+        limites = np.cumsum([0] + contagens).astype(np.int64)
+        return [(int(a), int(b)) for a, b in zip(limites[:-1], limites[1:]) if b > a]
+    log.warning("stream %s: pasta de audio nao encontrada; usando um segmento unico", categoria_bruta)
+    return [(0, int(meta["chunks"]))]
 
 
 def iter_janelas(feats, segmentos: list[tuple[int, int]], lote: int = 8192):
@@ -274,17 +280,26 @@ def avaliar_stream(
     sessao,
     feats,
     rms,
-    segmentos: list[tuple[int, int]],
+    segmentos: list[tuple[int, int]] | None,
     limiares: list[float],
     PortaoGrito=None,
     acima_db: float = PORTAO_ACIMA_DB,
+    bloco_piso_chunks: int = 1500,
 ) -> dict:
     """Disparos por limiar em um stream, com e sem o portao de volume.
 
     Sem portao: score >= limiar, com intervalo de 8 s.
     Com portao: cada chunk passa pelo `PortaoGrito` (RMS dBFS + VAD
     aproximado) e so conta o disparo liberado, tambem com 8 s.
+
+    O VAD aproximado usa `RMS > piso + 10 dB`, com o piso sendo o percentil 10
+    do RMS em blocos de ~2 min (1500 chunks). O conversor de features
+    paraleliza por arquivo e nao registra a ordem da concatenacao, entao o
+    stream inteiro e tratado como uma sessao continua (sem fronteiras de
+    arquivo). Ver as aproximacoes em RESULTADOS.md.
     """
+    if segmentos is None:
+        segmentos = [(0, len(feats))]
     indices, scores = scores_stream(sessao, feats, segmentos)
     n = len(indices)
     horas = n * PASSO_S / 3600.0
@@ -314,17 +329,20 @@ def avaliar_stream(
     rms = np.asarray(rms, dtype=np.float32)
     limiares_ord = sorted(limiares, reverse=True)
     estado = {limiar: {"ultimo": None, "contagem": 0} for limiar in limiares}
-    # Um portao por arquivo (stream novo = recalibra). O mesmo estado serve a
-    # todos os limiares: `avaliar` nao altera o portao.
+    rms = np.asarray(rms, dtype=np.float32)
+    # piso do bloco (percentil 10 do RMS) para o VAD aproximado
+    pisos = np.full(len(feats), SILENCIO_DB, dtype=np.float32)
     for ini, fim in segmentos:
         ini, fim = max(0, int(ini)), min(int(fim), len(feats))
-        trecho_rms = rms[ini:fim]
-        piso = float(np.percentile(trecho_rms, 10)) if len(trecho_rms) else SILENCIO_DB
-        corte_fala = piso + 10.0
+        for a in range(ini, fim, bloco_piso_chunks):
+            b = min(a + bloco_piso_chunks, fim)
+            pisos[a:b] = float(np.percentile(rms[a:b], 10)) if b > a else SILENCIO_DB
+    for ini, fim in segmentos:
+        ini, fim = max(0, int(ini)), min(int(fim), len(feats))
         portao = PortaoGrito()
         for i in range(ini, fim):
             db = float(rms[i]) if i < len(rms) else SILENCIO_DB
-            portao.observar(chunk_nivel(db), db > corte_fala)
+            portao.observar(chunk_nivel(db), db > float(pisos[i]) + 10.0)
             nota = score_chunk[i]
             if np.isnan(nota):
                 continue

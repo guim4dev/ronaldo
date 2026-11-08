@@ -231,8 +231,11 @@ def metricas_validacao(rede, d: dict, limiares: list[float]) -> dict:
 def chave_escolha(metricas: dict, limiar: float, fa_max: float) -> tuple:
     fa = metricas["fa_h"][limiar]
     recall = metricas["recall"][limiar]
-    viavel = fa <= fa_max
-    return (1 if viavel else 0, recall if viavel else -fa, recall, -fa)
+    viavel = recall > 0.0 and fa <= fa_max
+    if viavel:
+        return (1, recall, -fa)
+    # fora da meta: equilibra recall e FA (1 disparo/h "custa" 0,01 de recall)
+    return (0, recall - 0.01 * fa, recall)
 
 
 # --------------------------------------------------------------------------- #
@@ -296,20 +299,21 @@ def main() -> None:
     ap.add_argument("--dados", default=str(Path.home() / "data" / "gol"))
     ap.add_argument("--saida", default=str(REPO / "models" / "gol_grito.onnx"))
     ap.add_argument("--variacao", default="a")
-    ap.add_argument("--epocas", type=int, default=18)
+    ap.add_argument("--epocas", type=int, default=24)
     ap.add_argument("--passos-por-epoca", type=int, default=0, help="0 = len(pos_treino)//lote_pos")
     ap.add_argument("--lote-pos", type=int, default=64)
     ap.add_argument("--lote-neg", type=int, default=64)
-    ap.add_argument("--lote-acav", type=int, default=384)
-    ap.add_argument("--lote-stream", type=int, default=128)
-    ap.add_argument("--lr", type=float, default=1e-3)
-    ap.add_argument("--peso-negativo-max", type=float, default=100.0)
+    ap.add_argument("--lote-acav", type=int, default=512)
+    ap.add_argument("--lote-stream", type=int, default=256)
+    ap.add_argument("--lr", type=float, default=5e-4)
+    ap.add_argument("--peso-negativo-max", type=float, default=200.0)
     ap.add_argument("--camada", type=int, default=32)
     ap.add_argument("--blocos", type=int, default=1)
     ap.add_argument("--val-frac", type=float, default=0.10)
     ap.add_argument("--seed", type=int, default=7)
-    ap.add_argument("--paciencia", type=int, default=5)
-    ap.add_argument("--fa-max-checkpoint", type=float, default=0.5)
+    ap.add_argument("--paciencia", type=int, default=6)
+    ap.add_argument("--fa-max-checkpoint", type=float, default=2.0,
+                    help="FA/h (sem portao) maxima para o checkpoint; o portao so reduz")
     ap.add_argument("--threads", type=int, default=4)
     ap.add_argument("--smoke", action="store_true", help="nao exige MANIFESTO.json")
     args = ap.parse_args()
@@ -346,6 +350,7 @@ def main() -> None:
 
     melhor = None
     melhor_chave = None
+    melhor_epoca = None
     historico = []
     saida_dir = dados / "treino"
     saida_dir.mkdir(parents=True, exist_ok=True)
@@ -384,6 +389,7 @@ def main() -> None:
         )
         if melhor_chave is None or chave > melhor_chave:
             melhor_chave = chave
+            melhor_epoca = epoca
             melhor = {k: v.detach().cpu().clone() for k, v in rede.state_dict().items()}
             sem_melhora = 0
         else:
@@ -396,6 +402,7 @@ def main() -> None:
 
     if melhor is not None:
         rede.load_state_dict(melhor)
+        log.info("checkpoint escolhido: epoca %s (chave %s)", melhor_epoca, melhor_chave)
     caminho = Path(args.saida)
     exportar(rede, caminho)
     verificacao = verificar_modelo(caminho)
@@ -409,6 +416,7 @@ def main() -> None:
         "epocas_rodadas": len(historico),
         "historico": historico,
         "melhor_chave": list(melhor_chave) if melhor_chave else None,
+        "melhor_epoca": melhor_epoca,
         "verificacao": verificacao,
         "segundos": round(time.time() - t0, 1),
     }

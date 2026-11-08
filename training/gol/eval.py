@@ -84,11 +84,12 @@ def avaliar_streams(sessao, dados: Path, limiares: list[float], PortaoGrito) -> 
         meta = json.loads(meta_p.read_text(encoding="utf-8"))
         feats = np.load(feat_p, mmap_mode="r")
         rms = np.load(rms_p, mmap_mode="r")
-        segmentos = M.segmentos_do_meta(meta, dados, categoria)
+        # O conversor paralelo nao registra a ordem da concatenacao dos
+        # arquivos; o stream e avaliado como uma sessao continua.
         t0 = time.time()
-        resultado = M.avaliar_stream(sessao, feats, rms, segmentos, limiares, PortaoGrito)
+        resultado = M.avaliar_stream(sessao, feats, rms, None, limiares, PortaoGrito)
         resultado["categoria"] = nome
-        resultado["arquivos"] = len(segmentos)
+        resultado["arquivos"] = int(meta.get("fontes", 0))
         resultado["segundos"] = round(time.time() - t0, 1)
         saida[nome] = resultado
         log.info(
@@ -384,18 +385,20 @@ contados; limite superior unilateral de 95% Poisson.
 
 1. **Portao nos streams.** O stream so tem o RMS dBFS por chunk (nao ha audio).
    O chunk sintetico tem amplitude constante com o mesmo RMS, porque o portao de
-   producao so olha o RMS. O VAD e aproximado por `RMS > piso do arquivo + 10 dB`,
-   com piso = percentil 10 do RMS daquele arquivo. Cada arquivo comeca um stream
-   novo (o portao recalibra e perde a referencia), como um novo dispositivo.
+   producao so olha o RMS. O VAD e aproximado por `RMS > piso + 10 dB`, com piso =
+   percentil 10 do RMS em blocos de ~2 min. O stream inteiro e tratado como uma
+   sessao continua: o conversor de features paraleliza por arquivo e nao registra
+   a ordem da concatenacao, entao nao ha fronteira de arquivo confiavel. Os
+   eventos de fronteira sao ~1 janela por arquivo (desprezivel no total).
 2. **validation_set_features** (~11 h) nao tem RMS: a coluna COM portao e `n/d`.
    O numero sem portao e o que vale para esse conjunto; o portao so pode reduzir
    disparos, nunca aumentar.
 3. **Clipes de grito.** A fala normal simulada tem RMS de referencia -26 dBFS
    (25 s para a referencia do portao); o grito e simulado a referencia+12 dB.
    A fala normal com "gol" e avaliada no nivel da referencia.
-4. **Warmup.** Nos streams as 15 primeiras janelas de cada arquivo sao
-   descartadas (historico incompleto); nos clipes vale o warmup real do
-   `WakeWord` (5 primeiros chunkos com nota 0).
+4. **Warmup.** Nos streams as 15 primeiras janelas sao descartadas (historico
+   incompleto); nos clipes vale o warmup real do `WakeWord` (5 primeiros chunkos
+   com nota 0).
 5. **Alcance.** Os numeros provam vozes sinteticas e narradores reais. **Nao
    provam a voz do Guima**: isso depende do teste ao vivo
    (`tools/grito_ao_vivo.py`, 10 gritos + 2 min de conversa, nada gravado).
