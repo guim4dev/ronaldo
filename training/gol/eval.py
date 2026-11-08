@@ -274,8 +274,12 @@ def avaliar_features_curtas(sessao, caminho: Path, limiares: list[float], Portao
     feats = np.load(caminho, mmap_mode="r")
     if feats.ndim == 3:
         n, t = feats.shape[0], feats.shape[1]
-        notas = M.scores_janelas(sessao, np.asarray(feats).reshape(-1, feats.shape[-1]))
-        notas = notas.reshape(n, t).max(axis=1)
+        if t == M.JANELA:
+            notas = M.scores_janelas(sessao, np.asarray(feats))
+        else:
+            janelas = np.lib.stride_tricks.sliding_window_view(feats, M.JANELA, axis=1)
+            janelas = janelas.transpose(0, 1, 3, 2).reshape(-1, M.JANELA, M.DIM)
+            notas = M.scores_janelas(sessao, janelas).reshape(n, -1).max(axis=1)
     else:
         notas = M.scores_janelas(sessao, feats)
     saida = {"clipes": int(len(notas)), "segundos": 0.0, "por_limiar": {}}

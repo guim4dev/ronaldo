@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import math
 import sys
+from types import SimpleNamespace
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 GOL = Path(__file__).resolve().parents[1]
@@ -64,3 +66,24 @@ def test_intervalo_wilson_cobre_taxa_observada_e_limites() -> None:
     assert E.intervalo_wilson(0, 17)[0] == 0.0
     assert E.intervalo_wilson(17, 17)[1] == 1.0
     assert all(math.isnan(x) for x in E.intervalo_wilson(0, 0))
+
+
+def test_real_test_avalia_janelas_de_16_embeddings(tmp_path: Path) -> None:
+    class Sessao:
+        def get_inputs(self):
+            return [SimpleNamespace(name="input", shape=[1, 16, 96])]
+
+        def run(self, outputs, feed):
+            janela = feed["input"]
+            assert janela.shape == (1, 16, 96)
+            return [np.asarray([[float(janela.mean())]], dtype=np.float32)]
+
+    caminho = tmp_path / "real_test.npy"
+    np.save(caminho, np.stack([
+        np.zeros((16, 96), dtype=np.float16),
+        np.full((16, 96), 0.8, dtype=np.float16),
+    ]))
+    resultado = E.avaliar_features_curtas(Sessao(), caminho, [0.5], None)
+    assert resultado["clipes"] == 2
+    assert resultado["por_limiar"][0.5]["com"]["acertos"] == 1
+    assert resultado["por_limiar"][0.5]["com"]["ic95_wilson"]
