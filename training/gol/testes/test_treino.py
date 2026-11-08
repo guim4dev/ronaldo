@@ -185,6 +185,29 @@ def test_alinhamento_monta_janelas_da_producao() -> None:
     assert 0.1 < float(np.mean(y == 0)) < 0.45
 
 
+def test_lote_usa_frac_real_positivo() -> None:
+    from types import SimpleNamespace
+    import train as T
+
+    d = {
+        "real_train": np.full((4, M.JANELA, M.DIM), 2.0, np.float16),
+        "real_treino_idx": np.arange(4),
+        "alinhado": None,
+        "pos": np.full((6, M.JANELA, M.DIM), 1.0, np.float16),
+        "pos_treino": np.arange(6),
+        "neg": np.zeros((0, M.JANELA, M.DIM), np.float16),
+        "acav": np.zeros((0, M.JANELA, M.DIM), np.float16),
+        "game_hard": None,
+        "streams": [],
+    }
+    args = SimpleNamespace(lote_pos=10, frac_real_positivo=0.4, pos_antigo_frac=0.0,
+                           frac_janela_negativa=0.0, lote_neg=0, lote_acav=0,
+                           lote_game_hard=0, lote_stream=0)
+    x, y = T.montar_lote(d, args, np.random.default_rng(0))
+    assert int(y.sum()) == 10
+    assert int(np.sum(x[:, 0, 0] == 2.0)) == 4
+
+
 def test_iter_janelas_nao_cruza_segmento() -> None:
     feats = np.arange(100 * 96, dtype=np.float16).reshape(100, 96)
     indices, janelas = [], []

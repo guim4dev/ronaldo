@@ -27,6 +27,7 @@ import json
 import logging
 import math
 import os
+import re
 import subprocess
 import sys
 import time
@@ -206,6 +207,20 @@ def _carregar_vetor(caminho: Path, mmap: bool = True) -> np.ndarray:
     return np.load(caminho, mmap_mode="r" if mmap else None)
 
 
+def _split_real_por_video(nomes: list[str], videos: list[str], val_frac: float,
+                          seed: int) -> tuple[np.ndarray, np.ndarray]:
+    if not videos or len(nomes) == 0:
+        raise SystemExit("real_split.json nao tem clipes e videos de treino")
+    val_videos = set(str(v) for v in np.random.default_rng(seed).permutation(videos)[
+                     :max(1, int(round(len(videos) * val_frac)))])
+    ids = [re.sub(r"_\d+$", "", Path(nome).stem) for nome in nomes]
+    treino = np.asarray([i for i, video in enumerate(ids) if video not in val_videos], dtype=np.int64)
+    validacao = np.asarray([i for i, video in enumerate(ids) if video in val_videos], dtype=np.int64)
+    if not len(treino) or not len(validacao):
+        raise SystemExit("split por video de real_train deixou treino ou validacao vazio")
+    return treino, validacao
+
+
 def carregar_dados(dados: Path, val_frac: float, seed: int) -> dict:
     feat = dados / "features"
     alinhado = None
@@ -235,6 +250,25 @@ def carregar_dados(dados: Path, val_frac: float, seed: int) -> dict:
         game_hard = np.load(hard_p, mmap_mode="r")
         log.info("negativos dificeis de jogo: %s", game_hard.shape)
 
+    real_train = None
+    real_treino_idx = np.zeros(0, dtype=np.int64)
+    real_val_idx = np.zeros(0, dtype=np.int64)
+    real_p = feat / "real_train.npy"
+    split_p = feat / "real_split.json"
+    if real_p.exists():
+        if not split_p.exists():
+            raise SystemExit(f"falta {split_p} para separar real_train por video")
+        real_train = _carregar_vetor(real_p)
+        split = json.loads(split_p.read_text(encoding="utf-8"))
+        nomes = split.get("treino", [])
+        videos = split.get("videos_treino", [])
+        if len(nomes) != len(real_train) or not videos:
+            raise SystemExit(f"real_split.json nao corresponde a {real_p}")
+        real_treino_idx, real_val_idx = _split_real_por_video(nomes, videos, val_frac, seed)
+        n_val_videos = max(1, int(round(len(videos) * val_frac)))
+        log.info("real_train: %d clipes, treino=%d, val=%d, videos val=%d",
+                 len(real_train), len(real_treino_idx), len(real_val_idx), n_val_videos)
+
     streams_treino = []
     for categoria in CATEGORIAS:
         meta_p = feat / f"stream_{categoria}_treino_meta.json"
@@ -262,6 +296,9 @@ def carregar_dados(dados: Path, val_frac: float, seed: int) -> dict:
         "val": val,
         "streams": streams_treino,
         "game_hard": game_hard,
+        "real_train": real_train,
+        "real_treino_idx": real_treino_idx,
+        "real_val_idx": real_val_idx,
         "pos_treino": pos_treino,
         "pos_val": pos_val,
     }
@@ -326,21 +363,31 @@ def _linhas_mmap(arr, indices: np.ndarray) -> np.ndarray:
 
 def montar_lote(d: dict, args, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
     partes_x, partes_y = [], []
+    n_real = (int(round(args.lote_pos * args.frac_real_positivo))
+              if len(d.get("real_treino_idx", [])) else 0)
+    if args.frac_real_positivo > 0 and d.get("real_train") is None:
+        raise SystemExit("--frac-real-positivo exige features/real_train.npy e real_split.json")
+    if n_real:
+        idx_real = rng.choice(d["real_treino_idx"], size=n_real, replace=True)
+        partes_x.append(_linhas_mmap(d["real_train"], idx_real))
+        partes_y.append(np.ones(n_real, np.float32))
+    n_positivo = args.lote_pos - n_real
     if d["alinhado"] is not None:
-        n_antigo = int(round(args.lote_pos * args.pos_antigo_frac)) if d["pos"] is not None else 0
-        n_alinhado = args.lote_pos - n_antigo
+        n_antigo = int(round(n_positivo * args.pos_antigo_frac)) if d["pos"] is not None else 0
+        n_alinhado = n_positivo - n_antigo
         if n_alinhado > 0:
             x_pos, y_pos = d["alinhado"].amostrar(
-                n_alinhado, rng, args.frac_janela_negativa, args.frac_real_positivo)
+                n_alinhado, rng, args.frac_janela_negativa, 0.0)
             partes_x.append(x_pos); partes_y.append(y_pos)
         if n_antigo > 0:
             idx = rng.choice(d["pos_treino"], size=n_antigo, replace=True)
             partes_x.append(_linhas_mmap(d["pos"], idx))
             partes_y.append(np.ones(n_antigo, np.float32))
     else:
-        pos_idx = rng.choice(d["pos_treino"], size=args.lote_pos, replace=True)
-        partes_x.append(_linhas_mmap(d["pos"], pos_idx))
-        partes_y.append(np.ones(args.lote_pos, np.float32))
+        pos_idx = rng.choice(d["pos_treino"], size=n_positivo, replace=True)
+        if n_positivo:
+            partes_x.append(_linhas_mmap(d["pos"], pos_idx))
+            partes_y.append(np.ones(n_positivo, np.float32))
     neg_idx = rng.choice(len(d["neg"]), size=args.lote_neg, replace=True)
     acav_idx = rng.integers(0, len(d["acav"]), size=args.lote_acav)
     partes_x.append(_linhas_mmap(d["neg"], neg_idx))
@@ -391,6 +438,11 @@ def metricas_validacao(rede, d: dict, limiares: list[float]) -> dict:
         pos_val = np.asarray(d["pos"][d["pos_val"]], dtype=np.float32)
         with torch.no_grad():
             pos_scores = rede(torch.from_numpy(pos_val)).numpy().reshape(-1)
+    if d.get("real_train") is not None and len(d["real_val_idx"]):
+        real_val = _linhas_mmap(d["real_train"], d["real_val_idx"])
+        with torch.no_grad():
+            real_scores = rede(torch.from_numpy(real_val)).numpy().reshape(-1)
+        pos_scores = np.concatenate((pos_scores, real_scores))
     val_feats = d["val"]
     indices, scores = scores_janelas_torch(rede, val_feats)
     horas = len(indices) * M.PASSO_S / 3600.0

@@ -368,12 +368,16 @@ def escolher_limiar(resultado: dict, limiares: list[float]) -> dict:
         })
     # A meta de conversa vale para o conjunto somado (MLS + futebol); cada
     # conjunto aparece na tabela e o pior tambem e reportado no relatorio.
-    viaveis = [x for x in linhas if x["cumpriu"] == 3]
+    viaveis = [x for x in linhas
+               if x["fa_conversa"] <= METAS["fa_conversa"]
+               and x["fa_jogo_musica"] <= METAS["fa_jogo_musica"]]
     if viaveis:
-        escolhido = max(viaveis, key=lambda x: (x["acerto"], -x["fa_conversa"] - x["fa_jogo_musica"]))
+        escolhido = max(viaveis, key=lambda x: (x["acerto"], -x["fa_conversa"] - x["fa_jogo_musica"], x["limiar"]))
+        meta_fa_atingida = True
     else:
-        escolhido = max(linhas, key=lambda x: (x["cumpriu"], x["acerto"], -x["fa_conversa"] - x["fa_jogo_musica"]))
-    return {"escolhido": escolhido, "linhas": linhas}
+        escolhido = max(linhas, key=lambda x: x["limiar"])
+        meta_fa_atingida = False
+    return {"escolhido": escolhido, "linhas": linhas, "meta_fa_atingida": meta_fa_atingida}
 
 
 def _fmt_fa(item) -> str:
@@ -444,6 +448,8 @@ def imprimir_resumo(resultado: dict, escolha: dict) -> None:
         f"jogo+musica: {e['fa_jogo_musica']:.2f} [meta <= 0,2: {'OK' if e['metas']['fa_jogo_musica'] else 'NAO'}]"
     )
     print(f"  metas cumpridas: {e['cumpriu']}/3")
+    if not escolha["meta_fa_atingida"]:
+        print("  meta de FA não atingida")
     print("-" * 100)
 
 
