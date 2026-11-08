@@ -116,7 +116,7 @@ sem passar pelo modo voz. O comando roda sem esperar e `~` é expandido em cada 
 model = "gol_grito.onnx"
 action = "som"
 command = ["/usr/bin/afplay", "-v", "0.6", "~/Music/Reino/gol-rematch.wav"]
-threshold = 0.6
+threshold = 0.9
 intervalo_seconds = 8
 grito_db_acima = 10
 ```
