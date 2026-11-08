@@ -266,11 +266,18 @@ def anotar_gate_negativos(portao, modelo, caminhos: list[Path], limiares: list[f
 
 
 def avaliar_features_curtas(sessao, caminho: Path, limiares: list[float], PortaoGrito) -> dict:
-    """Clipes ja convertidos em features (ex.: real_test.npy), uma janela por clipe."""
+    """Clipes ja convertidos em features (ex.: real_test.npy).
+
+    Aceita [N, 16, 96] (uma janela por clipe) ou [N, T, 96] (varias janelas;
+    vale o maximo por clipe, como na producao).
+    """
     feats = np.load(caminho, mmap_mode="r")
     if feats.ndim == 3:
-        feats = np.asarray(feats).reshape(-1, feats.shape[-1])
-    notas = M.scores_janelas(sessao, feats)
+        n, t = feats.shape[0], feats.shape[1]
+        notas = M.scores_janelas(sessao, np.asarray(feats).reshape(-1, feats.shape[-1]))
+        notas = notas.reshape(n, t).max(axis=1)
+    else:
+        notas = M.scores_janelas(sessao, feats)
     saida = {"clipes": int(len(notas)), "segundos": 0.0, "por_limiar": {}}
     for limiar in limiares:
         sem = notas >= limiar

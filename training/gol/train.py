@@ -146,7 +146,10 @@ class PositivosAlinhados:
             else:
                 i = self.treino_idx[int(rng.integers(0, len(self.treino_idx)))]
                 ks = self.positivas[i]
-                k = ks[int(rng.integers(0, len(ks)))]
+                # prioriza a janela em que o fim da palavra cai no fim dela
+                # (delay 0), que e o caso dos clipes de teste de 2 s
+                pesos = np.exp(-np.arange(len(ks)) / 2.0)
+                k = ks[int(rng.choice(len(ks), p=pesos / pesos.sum()))]
                 ys.append(1.0)
             xs.append(self._janela(i, k))
         return np.asarray(xs, dtype=np.float32), np.asarray(ys, dtype=np.float32)
@@ -177,7 +180,11 @@ class PositivosAlinhados:
                 pendentes.append(self._janela(i, k)); donos.append(j); tipos.append("max")
                 if len(pendentes) >= lote:
                     drenar()
-            pendentes.append(self._janela(i, int(self.chunks[i]) - 1))
+            # janela em que o fim da palavra cai no fim dela (delay 0), que e
+            # o caso dos clipes de teste com a palavra ate o fim do wav
+            k_fim = max(M.JANELA - 1, min(int(self.chunks[i]) - 1,
+                                          int(math.ceil(self.fim[i])) - 1))
+            pendentes.append(self._janela(i, k_fim))
             donos.append(j); tipos.append("ultima")
         drenar()
         return maximo, ultima
@@ -193,16 +200,22 @@ def carregar_dados(dados: Path, val_frac: float, seed: int) -> dict:
     feat = dados / "features"
     alinhado = None
     pos = None
-    stream_p = feat / "pos_v2_stream.npy"
-    offsets_p = feat / "pos_v2_offsets.npy"
-    meta_p = feat / "pos_v2_meta.json"
+    stream_p = feat / "pos_all_stream.npy"
+    offsets_p = feat / "pos_all_offsets.npy"
+    meta_p = feat / "pos_all_meta.json"
+    if not stream_p.exists():
+        stream_p = feat / "pos_v2_stream.npy"
+        offsets_p = feat / "pos_v2_offsets.npy"
+        meta_p = feat / "pos_v2_meta.json"
     if stream_p.exists() and offsets_p.exists() and meta_p.exists():
         alinhado = PositivosAlinhados(
             np.load(stream_p, mmap_mode="r"), np.load(offsets_p),
             json.loads(meta_p.read_text(encoding="utf-8")), val_frac, seed,
         )
-    else:
+    if (feat / "pos_train.npy").exists():
         pos = _carregar_vetor(feat / "pos_train.npy")
+    elif alinhado is None:
+        raise SystemExit(f"falta {feat / 'pos_train.npy'} (e nao ha positivos alinhados)")
     neg = _carregar_vetor(feat / "neg_train.npy")
     acav = _carregar_vetor(dados / "raw" / "openwakeword" / ACAV_NOME)
     val = _carregar_vetor(dados / "raw" / "openwakeword" / VAL_NOME)
@@ -223,14 +236,14 @@ def carregar_dados(dados: Path, val_frac: float, seed: int) -> dict:
         streams_treino.append(AmostradorStream(feats, segmentos, categoria))
         log.info("stream treino %s: %d chunks, %d arquivos", categoria, len(feats), len(segmentos))
 
-    if alinhado is not None:
-        pos_treino = np.zeros(0, dtype=np.int64)
-        pos_val = np.zeros(0, dtype=np.int64)
-    else:
+    if pos is not None:
         n_val = max(1, int(round(len(pos) * val_frac)))
         ordem = np.random.default_rng(seed).permutation(len(pos))
         pos_val = np.sort(ordem[:n_val])
         pos_treino = np.sort(ordem[n_val:])
+    else:
+        pos_treino = np.zeros(0, dtype=np.int64)
+        pos_val = np.zeros(0, dtype=np.int64)
     return {
         "pos": pos,
         "alinhado": alinhado,
@@ -304,8 +317,15 @@ def _linhas_mmap(arr, indices: np.ndarray) -> np.ndarray:
 def montar_lote(d: dict, args, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
     partes_x, partes_y = [], []
     if d["alinhado"] is not None:
-        x_pos, y_pos = d["alinhado"].amostrar(args.lote_pos, rng, args.frac_janela_negativa)
-        partes_x.append(x_pos); partes_y.append(y_pos)
+        n_antigo = int(round(args.lote_pos * args.pos_antigo_frac)) if d["pos"] is not None else 0
+        n_alinhado = args.lote_pos - n_antigo
+        if n_alinhado > 0:
+            x_pos, y_pos = d["alinhado"].amostrar(n_alinhado, rng, args.frac_janela_negativa)
+            partes_x.append(x_pos); partes_y.append(y_pos)
+        if n_antigo > 0:
+            idx = rng.choice(d["pos_treino"], size=n_antigo, replace=True)
+            partes_x.append(_linhas_mmap(d["pos"], idx))
+            partes_y.append(np.ones(n_antigo, np.float32))
     else:
         pos_idx = rng.choice(d["pos_treino"], size=args.lote_pos, replace=True)
         partes_x.append(_linhas_mmap(d["pos"], pos_idx))
@@ -459,6 +479,8 @@ def main() -> None:
     ap.add_argument("--lote-pos", type=int, default=64)
     ap.add_argument("--frac-janela-negativa", type=float, default=0.25,
                     help="fracao do lote de positivos alinhados que vira janela antes da palavra")
+    ap.add_argument("--pos-antigo-frac", type=float, default=0.0,
+                    help="fracao do lote de positivos vinda do pos_train.npy antigo (janela final)")
     ap.add_argument("--lote-game-hard", type=int, default=128,
                     help="negativos dificeis minerados do stream de treino de jogo")
     ap.add_argument("--lote-neg", type=int, default=64)
