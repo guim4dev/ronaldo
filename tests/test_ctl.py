@@ -24,12 +24,16 @@ class FakeMac:
         failures=None,
         bootstrap_loads=True,
         disable_persists=True,
+        hex_status_rc=None,
+        hex_status_rcs=None,
     ):
         self.loaded, self.disabled, self.hex_running, self.hex_busy = loaded, disabled, hex_running, hex_busy
         self.service_stuck, self.hex_stubborn = service_stuck, hex_stubborn
         self.failures = failures or {}
         self.bootstrap_loads = bootstrap_loads
         self.disable_persists = disable_persists
+        self.hex_status_rc = hex_status_rc
+        self.hex_status_rcs = list(hex_status_rcs or [])
         self.calls: list[tuple[str, ...]] = []
 
     def run(self, *argv):
@@ -58,7 +62,12 @@ class FakeMac:
             verb = argv[1]
             rc = self.failures.get(verb, 0)
             if verb == "status":
-                rc = 0 if self.hex_running else 3
+                if self.hex_status_rcs:
+                    rc = self.hex_status_rcs.pop(0)
+                elif self.hex_status_rc is not None:
+                    rc = self.hex_status_rc
+                else:
+                    rc = 0 if self.hex_running else 3
             elif verb == "quit":
                 if self.hex_busy:
                     rc = 1
@@ -109,6 +118,35 @@ def test_off_leaves_closed_hex_alone_and_warns_about_login(mac, capsys):
     assert hex_calls and all(call == ("status", "--json") for call in hex_calls)
     assert "ronaldo off" in out.err and "login" in out.err
     assert not mac.loaded and mac.disabled
+
+
+def test_off_fails_closed_when_hex_status_is_uncertain(mac, capsys):
+    mac.hex_status_rc = 1
+
+    assert ctl.main(["off"]) == 1
+    out = capsys.readouterr()
+    assert "Não consegui consultar o Hex" in out.err
+    assert "microfone" not in out.out.lower()
+    hex_calls = [call[1:] for call in mac.calls if call[0] != "launchctl"]
+    assert ("quit",) not in hex_calls
+    assert ("launch-at-login", "off") not in hex_calls
+
+
+def test_status_shows_unknown_when_hex_status_is_uncertain(mac, capsys):
+    mac.hex_status_rc = 1
+
+    assert ctl.main(["status"]) == 0
+    assert capsys.readouterr().out == "ronaldo: ligado\nhex: desconhecido\n"
+
+
+def test_off_times_out_when_hex_status_stays_uncertain_after_quit(mac, capsys):
+    mac.hex_status_rc = 1
+    mac.hex_status_rcs = [0]
+
+    assert ctl.main(["off"]) == 1
+    out = capsys.readouterr()
+    assert "Hex não parou a tempo" in out.err
+    assert ("quit",) in [call[1:] for call in mac.calls if call[0] != "launchctl"]
 
 
 def test_off_reports_hex_busy_and_leaves_it_running(mac, capsys):

@@ -71,15 +71,17 @@ def servico_desativado() -> bool:
     return f'"{label()}" => disabled' in out
 
 
-def hex_rodando() -> bool:
-    return _run(HEX, "status", "--json").returncode == 0
+def hex_status() -> int:
+    """Return Hex's documented status code: 0 running, 3 stopped, other unknown."""
+    return _run(HEX, "status", "--json").returncode
 
 
 def estado() -> str:
     ronaldo = "ligado" if servico_carregado() else "desligado"
     if servico_desativado():
         ronaldo += " (não sobe no login)"
-    hexapp = "ligado" if hex_rodando() else "desligado"
+    codigo_hex = hex_status()
+    hexapp = "ligado" if codigo_hex == 0 else "desligado" if codigo_hex == 3 else "desconhecido"
     return f"ronaldo: {ronaldo}\nhex: {hexapp}"
 
 
@@ -94,17 +96,20 @@ def desligar() -> tuple[str | None, str | None]:
             erro = "O Ronaldo não parou a tempo; rode ronaldo off de novo."
     if not servico_desativado() and erro is None:
         erro = "O Ronaldo não foi desativado; rode ronaldo off de novo."
-    if not hex_rodando():
+    codigo_hex = hex_status()
+    if codigo_hex == 3:
         aviso = (
             "O Hex já estava fechado; a abertura dele no login não foi desligada. "
             "Se ele abrir no próximo login, rode ronaldo off de novo."
         )
         return erro, aviso
+    if codigo_hex != 0:
+        return "Não consegui consultar o Hex; ele pode estar aberto. Rode ronaldo off de novo.", None
     if _run(HEX, "launch-at-login", "off").returncode != 0 and erro is None:
         erro = "O Hex continua abrindo no login; rode ronaldo off de novo."
     if _run(HEX, "quit").returncode != 0:
         return "O Hex está ditando e continua aberto; rode ronaldo off de novo.", None
-    if not _wait(hex_rodando):  # quit returns before Hex has exited
+    if not _wait(lambda: hex_status() != 3):  # quit returns before Hex has exited
         if erro is None:
             erro = "O Hex não parou a tempo; rode ronaldo off de novo."
     return erro, None
@@ -125,7 +130,7 @@ def ligar() -> str | None:
             return "O Ronaldo não abriu"
     if not _wait(lambda: not servico_carregado()):
         return "O Ronaldo não ligou a tempo"
-    if not hex_rodando():
+    if hex_status() != 0:
         return "O Hex não ligou a tempo"
     return None
 
