@@ -46,6 +46,8 @@ ronaldo on       # liga os dois de novo
 ronaldo status   # o que está rodando (o padrão, sem argumento)
 ```
 
+Se o Hex já estiver fechado, `ronaldo off` não o abre para evitar ligar o microfone; a abertura dele no login fica como estava.
+
 O `install.sh` coloca `ronaldo` e `ronaldo-voz` em `~/.local/bin`. Se essa pasta não estiver no `PATH` do teu shell, ele avisa a linha para pôr no `~/.zshrc` ou no `~/.bashrc`.
 
 ## Configurar

@@ -71,6 +71,8 @@ echo "→ Hex abre no login"
 "$HEX" launch-at-login on >/dev/null
 
 echo "→ (re)iniciando"
+# "ronaldo off" disables the service; a disabled service refuses bootstrap.
+launchctl enable "gui/$(id -u)/$LABEL"
 launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
 # bootout returns before the old instance has exited, and until it has, bootstrap
 # fails with "Bootstrap failed: 5: Input/output error". Wait up to 10 s for it.
