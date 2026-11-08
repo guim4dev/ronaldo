@@ -51,6 +51,7 @@ LEGENDAS = RAW / "legendas"
 CAND = RAW / "candidatos"
 CLIPS = RAW / "clips"
 META = RAW / "meta.jsonl"
+META_FILTRADO = RAW / "meta_filtrado.jsonl"
 CAND_JSONL = RAW / "candidatos.jsonl"
 VIDEOS_JSON = RAW / "videos.json"
 SPLIT_JSON = C.FEATURES / "real_split.json"
@@ -130,8 +131,129 @@ CONSULTAS: dict[str, list[str]] = {
         "luciano do valle gol narracao",
         "jose carlos araujo gol narracao",
         "narracao gol libertadores",
+        "gols do flamengo compilado",
+        "gols do corinthians compilado",
+        "gols do palmeiras compilado",
+        "gols do sao paulo compilado",
+        "gols do gremio compilado",
+        "gols do internacional compilado",
+        "gols do cruzeiro compilado",
+        "gols do vasco compilado",
+        "gols do botafogo compilado",
+        "gols do santos compilado",
+        "gols do fluminense compilado",
+        "gols do atletico mineiro compilado",
+        "gols do bahia compilado",
+        "gols do sport compilado",
+        "gols do fortaleza compilado",
+        "gols do ceara compilado",
+        "gols da copa 2022 narracao",
+        "gols da copa 2018 narracao",
+        "gols da copa 2014 narracao",
+        "gols do brasileirao narracao",
+        "melhores gols da historia narracao",
+        "gols de falta narracao",
+        "gols de bicicleta narracao",
+        "gols de cabeca narracao",
+        "gols nos acrescimos narracao",
+        "virada historica narracao gol",
+        "final de campeonato narracao gol",
+        "gol do titulo narracao",
+        "gols com narracao do galvao bueno",
+        "gols com narracao do silvio luiz",
+        "gols com narracao do luciano do valle",
+        "gols com narracao do jose carlos araujo",
+        "gols com narracao do milton leite",
+        "gols com narracao do osmar santos",
+        "gols com narracao do cleber machado",
+        "gols com narracao do luiz roberto",
+        "gols com narracao do gustavo villani",
+        "gols com narracao do everaldo marques",
+        "gols com narracao do paulo andrade",
+        "gols com narracao do rogerio vaughan",
+        "narracao de gol do radio brasileiro",
+        "gols com narracao de arrepiar compilado",
+        "melhores narracoes do futebol brasileiro",
+        "compilado de gols com narracao",
     ],
 }
+
+
+CONSULTAS_EXTRA: dict[str, list[str]] = {
+    "torcedor": [
+        "compilado reacao gol",
+        "compilado de comemoracoes de gol",
+        "torcedores comemorando gol compilado",
+        "reacao gol brasileirao",
+        "reacao gol libertadores",
+        "reacao gol copa do mundo",
+        "comemoracao gol selecao compilado",
+        "react gol flamengo",
+        "react gol corinthians",
+        "react gol palmeiras",
+        "reaccion al gol",
+        "reaccion gol argentina",
+        "reaccion gol river",
+        "reaccion gol boca",
+        "gritando gol reaccion",
+        "reaccion gol espana",
+        "reaccion gol mexico",
+        "reaccion gol colombia",
+        "hincha gritando gol",
+        "reaccion gol liga mx",
+        "reaccion gol champions",
+        "gol reaccion streamer espanol",
+        "reaccion gol mundial",
+    ],
+    "gamer": [
+        "fifa gol reaction compilation",
+        "ea fc goal reaction",
+        "rematch goal reaction",
+        "gol fifa compilation reaction",
+        "gamer goal scream compilation",
+        "fifa rage goal scream",
+        "fc 25 gol reaction",
+        "efootball gol reaction",
+        "reaccion gol efootball",
+        "gol en fifa reaccion",
+    ],
+    "narrador": [
+        "gols do neymar narracao",
+        "gols do messi narracao",
+        "gols do cristiano ronaldo narracao",
+        "gols de pele narracao",
+        "gols do romario narracao",
+        "gols do ronaldo fenomeno narracao",
+        "gols do zico narracao",
+        "gols da selecao 2002 narracao",
+        "gols da selecao 1994 narracao",
+        "gols da selecao 1970 narracao",
+        "gols historicos do futebol brasileiro",
+        "gols do brasileirao 2023 narracao",
+        "gols do brasileirao 2025 narracao",
+        "gols da libertadores narracao",
+        "gols da champions narracao",
+        "gols da copa do mundo narracao",
+        "gols de falta do brasileirao narracao",
+        "gols de penalti narracao",
+        "gols contra narracao",
+        "gols de voleio narracao",
+        "gols nos ultimos minutos narracao",
+        "gols aos 90 minutos narracao",
+        "narracao gol do flamengo 2019",
+        "narracao gol do corinthians 2012",
+        "narracao gol do palmeiras 2021",
+        "narracao gol do gremio 2017",
+        "narracao gol do internacional 2006",
+        "narracao gol do sao paulo 2005",
+        "narracao gol do santos 2011",
+        "narracao gol do vasco 2000",
+        "narracao gol do cruzeiro 2003",
+        "narracao gol do botafogo 2024",
+    ],
+}
+for _tipo, _consultas in CONSULTAS_EXTRA.items():
+    CONSULTAS.setdefault(_tipo, []).extend(_consultas)
 
 TITULO_BOM = re.compile(
     r"gol|gool|gola[cç]o|comemora|reac|react|torcida|narra|fifa|ea fc|rematch|"
@@ -387,7 +509,8 @@ def _baixar_audio(vid: str, destino: Path) -> bool:
     return False
 
 
-def etapa_baixar(alvo: int, limite_busca: int, workers: int, tipos: tuple[str, ...] = TIPOS) -> None:
+def etapa_baixar(alvo: int, limite_busca: int, workers: int,
+                 tipos: tuple[str, ...] = TIPOS, com_legendas: bool = False) -> None:
     """Baixa >= alvo videos novos, diversos, com legenda/audio 16 kHz mono."""
     VIDEOS.mkdir(parents=True, exist_ok=True)
     LEGENDAS.mkdir(parents=True, exist_ok=True)
@@ -406,7 +529,7 @@ def etapa_baixar(alvo: int, limite_busca: int, workers: int, tipos: tuple[str, .
             }
 
     # legendas dos videos que ja estao no registro (os 24 de narracao inclusive)
-    for v in por_id.values():
+    for v in (por_id.values() if com_legendas else []):
         if v.get("legenda") is True:
             continue
         p = _baixar_legenda(v["id"])
@@ -432,18 +555,21 @@ def etapa_baixar(alvo: int, limite_busca: int, workers: int, tipos: tuple[str, .
                 if vid in vistos or vid in por_id:
                     continue
                 vistos.add(vid)
-                if item["dur"] < 10 or item["dur"] > 600:
+                limite = 1800 if tipo == "narrador" else 600
+                if item["dur"] < 10 or item["dur"] > limite:
                     continue
                 if TITULO_RUIM.search(item["titulo"]):
                     continue
                 if not TITULO_BOM.search(item["titulo"]):
+                    continue
+                if tipo in ("narrador", "torcedor") and not TITULO_FORTE.search(item["titulo"]):
                     continue
                 candidatos.append({**item, "tipo": tipo, "consulta": consulta})
     log(f"baixar: {len(candidatos)} candidatos de busca (alvo {alvo} novos)")
 
     # legendas primeiro (barato; evita baixar video sem gol). Sequencial para
     # nao disparar 429 do YouTube.
-    for item in candidatos:
+    for item in (candidatos if com_legendas else []):
         vid = item["id"]
         if por_id.get(vid, {}).get("legenda") is True:
             item["legenda"] = True
@@ -463,14 +589,26 @@ def etapa_baixar(alvo: int, limite_busca: int, workers: int, tipos: tuple[str, .
                 break
         time.sleep(1.2)
 
+    # diversidade: no maximo 8 videos por canal
+    por_canal: dict[str, int] = {}
+    diversos: list[dict] = []
+    for item in candidatos:
+        canal = item.get("canal", "")
+        if canal and por_canal.get(canal, 0) >= 8:
+            continue
+        por_canal[canal] = por_canal.get(canal, 0) + 1
+        diversos.append(item)
+    candidatos = diversos
+
     selecionados = []
     ignorados = 0
     for item in candidatos:
-        tem_legenda = item.get("legenda")
-        gols = item.get("gols_legenda")
-        if tem_legenda and gols == 0 and not TITULO_FORTE.search(item["titulo"]):
-            ignorados += 1
-            continue
+        if com_legendas:
+            tem_legenda = item.get("legenda")
+            gols = item.get("gols_legenda")
+            if tem_legenda and gols == 0 and not TITULO_FORTE.search(item["titulo"]):
+                ignorados += 1
+                continue
         selecionados.append(item)
     log(f"baixar: {len(selecionados)} selecionados ({ignorados} sem gol na legenda)")
 
@@ -681,105 +819,196 @@ def _candidatos_do_video(video: dict, x: np.ndarray) -> list[dict]:
     return cands
 
 
-def etapa_recortar(workers: int, manter_videos: bool) -> None:
+def _clips_da_transcricao(video: dict, x: np.ndarray, tr: dict, db: np.ndarray) -> list[dict]:
+    """Clipe justo em volta de cada "gol" que a transcricao completa encontrou.
+
+    A transcricao completa substitui o pico de RMS como localizador: o pico
+    muitas vezes nao coincide com a palavra. O RMS continua como filtro de
+    volume (>= percentil 60 do proprio video).
+    """
+    dur = len(x) / SR
+    if len(db) == 0:
+        return []
+    piso = float(np.percentile(db, 50))
+    gols: list[tuple[float, float, str, float]] = []
+    for a, b, w in tr["palavras"]:
+        if not _e_gol(w) or (b - a) < 0.15:
+            continue
+        dbl = _db_local(db, (a + b) / 2)
+        if dbl < piso:
+            continue
+        gols.append((a, b, w, dbl))
+    # prefere as ocorrencias longas (grito) e separa por 1,5 s
+    gols.sort(key=lambda g: (g[1] - g[0]), reverse=True)
+    escolhidos: list[tuple[float, float, str, float]] = []
+    for g in gols:
+        mid = (g[0] + g[1]) / 2
+        if any(abs(mid - (h[0] + h[1]) / 2) < 1.2 for h in escolhidos):
+            continue
+        escolhidos.append(g)
+        if len(escolhidos) >= 30:
+            break
+    escolhidos.sort(key=lambda g: g[0])
+
+    vid = video["id"]
+    clips: list[dict] = []
+    for n, (a, b, w, dbl) in enumerate(escolhidos):
+        inicio, fim = a - 0.3, b + 0.3
+        if fim - inicio > 3.0:
+            meio = (inicio + fim) / 2
+            inicio, fim = meio - 1.5, meio + 1.5
+        inicio, fim = max(0.0, inicio), min(dur, fim)
+        if fim - inicio < 0.3:
+            continue
+        trecho = x[int(inicio * SR): int(fim * SR)].copy()
+        pico = float(np.max(np.abs(trecho))) if len(trecho) else 0.0
+        if pico > 0.99:
+            trecho = trecho / pico * 0.99
+        nome = f"{vid}_{n:02d}.wav"
+        C.salvar_wav16(CLIPS / nome, trecho)
+        clips.append({
+            "video": vid, "tipo": video["tipo"], "i": n, "clipe": nome,
+            "inicio_abs": round(inicio, 3), "fim_abs": round(fim, 3),
+            "duracao": round(fim - inicio, 3), "fonte": "transcricao",
+            "fonte_transcricao": "whisper", "texto": tr["texto"],
+            "texto_whisper": tr["texto"], "palavra": w.strip(),
+            "db": round(dbl, 1), "ok": True,
+        })
+    return clips
+
+
+def _processar_video(video: dict, manter_videos: bool) -> list[dict]:
+    caminho = Path(video["caminho"])
+    x, sr = _ler(caminho)
+    if sr != SR:
+        x = C.resample(x, sr)
+    db = _envelope_db(x)
+    tr = _transcrever(x)
+    clips = _clips_da_transcricao(video, x, tr, db)
+    if not clips:
+        # fallback: candidatos por legenda/RMS, verificados um a um
+        for cand in _candidatos_do_video(video, x):
+            a = int(cand["inicio"] * SR)
+            b = int(cand["fim"] * SR)
+            trecho = x[a:b]
+            if len(trecho) < int(0.3 * SR):
+                continue
+            p = CAND / f"{video['id']}_{cand['i']:02d}.wav"
+            C.salvar_wav16(p, trecho)
+            cand["arquivo"] = str(p)
+            r = _verificar(cand)
+            if r.get("ok") and r.get("clipe"):
+                clips.append(r)
+    if not manter_videos and not video.get("manter"):
+        caminho.unlink(missing_ok=True)
+    return clips
+
+
+def etapa_recortar(workers: int, manter_videos: bool, limite_videos: int = 0) -> None:
     CLIPS.mkdir(parents=True, exist_ok=True)
     CAND.mkdir(parents=True, exist_ok=True)
     videos = _ler_json(VIDEOS_JSON, [])
     if not videos:
         raise SystemExit("sem videos.json (rode --baixar)")
 
-    # 1) candidatos (6 s) a partir do audio completo; apaga o video depois
-    prev = {c["arquivo"]: c for c in _ler_jsonl(CAND_JSONL) if c.get("arquivo")}
-    todos: list[dict] = []
-    for n, video in enumerate(videos, 1):
-        vid = video["id"]
-        existentes = sorted(CAND.glob(f"{vid}_*.wav"))
-        caminho = Path(video["caminho"])
-        if existentes and all(str(p) in prev for p in existentes):
-            todos.extend(prev[str(p)] for p in existentes)
-            log(f"recortar: {vid}: {len(existentes)} candidatos ja existem ({n}/{len(videos)})")
-            continue
-        if not caminho.exists():
-            todos.extend(prev[str(p)] for p in existentes if str(p) in prev)
-            log(f"recortar: {vid}: audio ausente, uso o que ja existe")
-            continue
-        x, sr = _ler(caminho)
-        if sr != SR:
-            x = C.resample(x, sr)
-        cands = _candidatos_do_video(video, x)
-        gravados = 0
-        for cand in cands:
-            a = int(cand["inicio"] * SR)
-            b = int(cand["fim"] * SR)
-            trecho = x[a:b]
-            if len(trecho) < int(0.3 * SR):
-                continue
-            p = CAND / f"{vid}_{cand['i']:02d}.wav"
-            C.salvar_wav16(p, trecho)
-            cand["arquivo"] = str(p)
-            prev[str(p)] = cand
-            todos.append(cand)
-            gravados += 1
-        log(f"recortar: {vid} [{video['tipo']}]: {gravados} candidatos ({n}/{len(videos)})")
-        _salvar_jsonl(CAND_JSONL, list(prev.values()))
-        if not manter_videos and not video.get("manter"):
-            caminho.unlink(missing_ok=True)
-
-    # so candidatos que existem em disco
-    vistos_arq: set[str] = set()
-    limpos: list[dict] = []
-    for cand in todos:
-        arq = cand.get("arquivo", str(CAND / f"{cand['video']}_{cand['i']:02d}.wav"))
-        if arq in vistos_arq or not Path(arq).exists():
-            continue
-        vistos_arq.add(arq)
-        cand["arquivo"] = arq
-        limpos.append(cand)
-    todos = limpos
-    _salvar_jsonl(CAND_JSONL, todos)
-    log(f"recortar: {len(todos)} candidatos em {CAND}")
-
-    # 2) verificacao whisper em paralelo
     feitos: dict[str, dict] = {}
     if META.exists():
-        for linha in META.read_text(encoding="utf-8").splitlines():
-            if not linha.strip():
-                continue
-            try:
-                m = json.loads(linha)
-            except json.JSONDecodeError:
-                continue
+        for m in _ler_jsonl(META):
             if m.get("ok") and m.get("clipe"):
                 feitos[m["clipe"]] = m
-    pendentes = [c for c in todos if f"{c['video']}_{c['i']:02d}.wav" not in feitos]
-    log(f"recortar: {len(pendentes)} candidatos para verificar ({len(feitos)} ja prontos)")
 
-    resultados: list[dict] = []
+    tarefas = [v for v in videos if Path(v["caminho"]).exists()]
+    if limite_videos:
+        tarefas = tarefas[:limite_videos]
+    log(f"recortar: {len(tarefas)} videos com audio para transcrever")
     t0 = time.time()
     with ProcessPoolExecutor(max_workers=workers) as pool:
-        futuros = {pool.submit(_verificar, c): c for c in pendentes}
+        futuros = {pool.submit(_processar_video, v, manter_videos): v for v in tarefas}
         for n, f in enumerate(as_completed(futuros), 1):
+            v = futuros[f]
             try:
-                r = f.result()
+                clips = f.result()
             except Exception as exc:  # noqa: BLE001
-                log(f"  erro em {futuros[f]['video']}: {exc}")
-                continue
-            resultados.append(r)
-            if n % 25 == 0 or n == len(futuros):
-                ok = sum(1 for x in resultados if x.get("ok"))
-                log(f"  {n}/{len(futuros)} verificados, {ok} com gol ({time.time()-t0:.0f}s)")
-    for r in resultados:
-        if r.get("ok") and r.get("clipe"):
-            feitos[r["clipe"]] = r
-    _salvar_jsonl(META, sorted(feitos.values(), key=lambda m: (m["video"], m["clipe"])))
-    log(f"recortar: {len(feitos)} clipes verificados em {CLIPS}")
+                log(f"  erro em {v['id']}: {exc}")
+                clips = []
+            # substitui os clipes anteriores desse video (idempotente)
+            for chave in [k for k, m in feitos.items() if m.get("video") == v["id"]]:
+                feitos.pop(chave, None)
+            for c in clips:
+                feitos[c["clipe"]] = c
+            log(f"  {n}/{len(futuros)} {v['id']} [{v['tipo']}]: {len(clips)} clipes ({time.time()-t0:.0f}s)")
+            _salvar_jsonl(META, sorted(feitos.values(), key=lambda m: (m["video"], m["clipe"])))
+    log(f"recortar: {len(feitos)} clipes em {CLIPS}")
 
-    # 3) os 125 clipes antigos de gol_real: mesma verificacao, mesmo video
+    # os 125 clipes antigos de gol_real: mesma verificacao, mesmo video
     antigos_dir = C.RAW / "gol_real" / "clips"
     antigos = sorted(antigos_dir.glob("*.wav")) if antigos_dir.exists() else []
     if antigos:
         _verificar_antigos(antigos, feitos, workers)
+        _verificar_antigos_por_legenda(feitos)
 
+
+
+def _verificar_antigos_por_legenda(feitos: dict[str, dict]) -> None:
+    """Recupera clipe antigo cujo momento tem "gol" na legenda do video.
+
+    O clipe antigo foi cortado no pico de RMS; a legenda diz se aquele trecho
+    tem a palavra gol. A posicao e achada por correlacao cruzada com o video.
+    """
+    from scipy.signal import fftconvolve
+
+    antigos_dir = C.RAW / "gol_real" / "clips"
+    videos_dir = C.RAW / "gol_real" / "videos"
+    por_video: dict[str, list[Path]] = {}
+    for p in sorted(antigos_dir.glob("*.wav")):
+        if f"antigo_{p.stem}.wav" in feitos:
+            continue
+        vid = p.stem.rsplit("_", 1)[0]
+        por_video.setdefault(vid, []).append(p)
+    recuperados = 0
+    for vid, clips in por_video.items():
+        video = videos_dir / f"{vid}.wav"
+        legenda = LEGENDAS / f"{vid}.vtt"
+        if not video.exists() or not legenda.exists():
+            continue
+        eventos = [e for e in ler_legenda(legenda) if _e_gol(e["palavra"])]
+        if not eventos:
+            continue
+        x, sr = _ler(video)
+        if sr != SR:
+            x = C.resample(x, sr)
+        for p in clips:
+            y, _ = _ler(p)
+            n = len(y)
+            if n < int(0.3 * SR) or n >= len(x):
+                continue
+            yc = y - y.mean()
+            corr = fftconvolve(x, yc[::-1], mode="valid")
+            k = int(np.argmax(corr))
+            seg = x[k: k + n]
+            seg = seg - seg.mean()
+            den = float(np.linalg.norm(seg) * np.linalg.norm(yc))
+            coef = float(np.dot(seg, yc) / den) if den > 0 else 0.0
+            if coef < 0.5:
+                continue
+            centro = (k + n / 2) / SR
+            if not any(abs(e["t"] - centro) <= 3.0 for e in eventos):
+                continue
+            e = min(eventos, key=lambda e: abs(e["t"] - centro))
+            nome = f"antigo_{p.stem}.wav"
+            C.salvar_wav16(CLIPS / nome, y)
+            feitos[nome] = {
+                "video": vid, "tipo": "narrador", "i": 0, "clipe": nome,
+                "inicio_abs": round(k / SR, 3), "fim_abs": round((k + n) / SR, 3),
+                "duracao": round(n / SR, 3), "fonte": "clipe_antigo",
+                "fonte_transcricao": "youtube", "texto": e["palavra"],
+                "texto_whisper": "", "palavra": e["palavra"], "db": 0.0,
+                "ok": True, "correlacao": round(coef, 3),
+            }
+            recuperados += 1
+    if recuperados:
+        _salvar_jsonl(META, sorted(feitos.values(), key=lambda m: (m["video"], m["clipe"])))
+        log(f"recortar: {recuperados} clipes antigos recuperados pela legenda")
 
 def _verificar_antigos(antigos: list[Path], feitos: dict[str, dict], workers: int) -> None:
     """Verifica os clipes antigos e os inclui se a transcricao tiver gol."""
@@ -849,6 +1078,153 @@ def _verificar_antigo(cand: dict) -> dict:
             "texto_whisper": tr["texto"], "palavra": detalhe}
 
 
+
+# --------------------------------------------------------------------------- #
+# etapa 2b: filtro final (alucinacao e volume de grito)
+# --------------------------------------------------------------------------- #
+def _texto_repetido(texto: str) -> bool:
+    """Detecta alucinacao do whisper: n-grama repetido em sequencia."""
+    tokens = re.findall(r"[0-9a-zA-ZÀ-ÿçÇ]+", (texto or "").lower())
+    if len(tokens) < 4:
+        return False
+    for n in (1, 2, 3):
+        rep = 1
+        for i in range(n, len(tokens)):
+            if tokens[i - n: i] == tokens[i: i + n]:
+                rep += 1
+                if rep >= 3:
+                    return True
+            else:
+                rep = 1
+    unicos = len(set(tokens)) / len(tokens)
+    return len(tokens) >= 20 and unicos < 0.30
+
+
+def _pico_rms_db(x: np.ndarray) -> float:
+    db = _envelope_db(x, 0.05, 0.10)
+    return float(np.max(db)) if len(db) else -120.0
+
+
+def _mediana_fala(x: np.ndarray) -> float:
+    db = _envelope_db(x, 0.05, 0.10)
+    if len(db) == 0:
+        return -120.0
+    piso = float(np.percentile(db, 30))
+    fala = db[db >= piso]
+    return float(np.median(fala)) if len(fala) else float(np.median(db))
+
+
+def _garantir_audio(video: dict) -> Path | None:
+    p = Path(video["caminho"])
+    if p.exists() and p.stat().st_size > 1000:
+        return p
+    if _baixar_audio(video["id"], p):
+        return p
+    return None
+
+
+def _metricas_clipe(clipe: str) -> dict:
+    x, sr = _ler(CLIPS / clipe)
+    if sr != SR:
+        x = C.resample(x, sr)
+    tr = _transcrever(x)
+    return {
+        "texto_clipe": tr["texto"],
+        "tem_gol_clipe": _texto_tem_gol(tr["texto"]),
+        "repetido": _texto_repetido(tr["texto"]),
+        "pico_clipe_db": round(_pico_rms_db(x), 1),
+        "duracao_clipe": round(len(x) / sr, 3),
+    }
+
+
+def etapa_filtrar(workers: int) -> None:
+    """Descarta alucinacao do whisper e clipe que nao e grito.
+
+    Regras do cavaleiro:
+    - texto do clipe repetido (ex.: "E eu? E eu?") -> descarta;
+    - clipe sem gol/golaco no trecho -> descarta;
+    - pico RMS do clipe < mediana da fala do video + 6 dB -> descarta.
+    """
+    meta = [m for m in _ler_jsonl(META) if m.get("ok") and m.get("clipe")]
+    if not meta:
+        raise SystemExit("sem clipes (rode --recortar)")
+    videos = {v["id"]: v for v in _ler_json(VIDEOS_JSON, [])}
+
+    # 1) garante o audio dos videos com clipe para medir a mediana da fala
+    faltando = sorted({m["video"] for m in meta if not Path(videos.get(m["video"], {}).get("caminho", "")).exists()})
+    if faltando:
+        log(f"filtrar: rebaixando {len(faltando)} videos para medir a mediana da fala")
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            futuros = {pool.submit(_garantir_audio, videos[v]): v for v in faltando if v in videos}
+            for n, f in enumerate(as_completed(futuros), 1):
+                if f.result() is None:
+                    log(f"  audio indisponivel: {futuros[f]}")
+                if n % 10 == 0:
+                    log(f"  {n}/{len(futuros)} audios")
+
+    mediana: dict[str, float] = {}
+    for vid in sorted({m["video"] for m in meta}):
+        p = Path(videos.get(vid, {}).get("caminho", ""))
+        if p.exists():
+            x, sr = _ler(p)
+            if sr != SR:
+                x = C.resample(x, sr)
+            mediana[vid] = round(_mediana_fala(x), 1)
+        else:
+            mediana[vid] = -120.0
+
+    # 2) re-transcreve cada clipe (texto local) em paralelo
+    log(f"filtrar: re-transcrevendo {len(meta)} clipes")
+    metricas: dict[str, dict] = {}
+    with ProcessPoolExecutor(max_workers=workers) as pool:
+        futuros = {pool.submit(_metricas_clipe, m["clipe"]): m for m in meta}
+        for n, f in enumerate(as_completed(futuros), 1):
+            try:
+                metricas[futuros[f]["clipe"]] = f.result()
+            except Exception as exc:  # noqa: BLE001
+                log(f"  erro em {futuros[f]['clipe']}: {exc}")
+            if n % 50 == 0 or n == len(futuros):
+                log(f"  {n}/{len(futuros)} clipes re-transcritos")
+
+    # 3) aplica as regras
+    descartes = {"alucinacao": 0, "sem_gol_no_trecho": 0, "nao_e_grito": 0}
+    por_tipo_descarte = {t: {"alucinacao": 0, "sem_gol_no_trecho": 0, "nao_e_grito": 0} for t in TIPOS}
+    mantidos: list[dict] = []
+    for m in meta:
+        met = metricas.get(m["clipe"], {})
+        m.update(met)
+        m["mediana_fala_db"] = mediana.get(m["video"], -120.0)
+        m["db_acima_mediana"] = round(float(m.get("pico_clipe_db", -120.0)) - m["mediana_fala_db"], 1)
+        tipo = m.get("tipo", "narrador")
+        if m.get("repetido"):
+            descartes["alucinacao"] += 1
+            por_tipo_descarte[tipo]["alucinacao"] += 1
+            continue
+        if not (m.get("tem_gol_clipe") or _e_gol(m.get("palavra", ""))):
+            descartes["sem_gol_no_trecho"] += 1
+            por_tipo_descarte[tipo]["sem_gol_no_trecho"] += 1
+            continue
+        if m["db_acima_mediana"] < 6.0:
+            descartes["nao_e_grito"] += 1
+            por_tipo_descarte[tipo]["nao_e_grito"] += 1
+            continue
+        mantidos.append(m)
+
+    _salvar_jsonl(META_FILTRADO, sorted(mantidos, key=lambda m: (m["video"], m["clipe"])))
+    resumo = {
+        "total_antes": len(meta),
+        "total_depois": len(mantidos),
+        "descartes": descartes,
+        "por_tipo_descarte": por_tipo_descarte,
+        "por_tipo": {t: sum(1 for m in mantidos if m["tipo"] == t) for t in TIPOS},
+        "videos": len({m["video"] for m in mantidos}),
+    }
+    _salvar_json(RAW / "filtro.json", resumo)
+    log(f"filtrar: {len(mantidos)}/{len(meta)} clipes mantidos")
+    log(f"  descartes: {descartes}")
+    log(f"  por tipo: {resumo['por_tipo']}")
+
+
 # --------------------------------------------------------------------------- #
 # etapa 3: split por video
 # --------------------------------------------------------------------------- #
@@ -908,7 +1284,8 @@ def _dedup_antigos(clips: list[dict]) -> list[dict]:
 
 
 def etapa_split(min_treino: int, min_teste: int, min_videos_teste: int) -> None:
-    meta = [m for m in _ler_jsonl(META) if m.get("ok") and m.get("clipe")]
+    fonte = META_FILTRADO if META_FILTRADO.exists() else META
+    meta = [m for m in _ler_jsonl(fonte) if m.get("ok") and m.get("clipe")]
     if not meta:
         raise SystemExit("sem clipes verificados (rode --recortar)")
     meta = _dedup_antigos(meta)
@@ -1020,7 +1397,8 @@ def etapa_features(workers: int) -> None:
     split = _ler_json(SPLIT_JSON, None)
     if not split:
         raise SystemExit("sem real_split.json (rode --split)")
-    meta = {m["clipe"]: m for m in _ler_jsonl(META) if m.get("ok")}
+    fonte = META_FILTRADO if META_FILTRADO.exists() else META
+    meta = {m["clipe"]: m for m in _ler_jsonl(fonte) if m.get("ok")}
     saidas = {}
     for lado, pasta in (("treino", C.WORK / "real_train"), ("teste", C.WORK / "real_test")):
         pasta.mkdir(parents=True, exist_ok=True)
@@ -1172,29 +1550,35 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--baixar", action="store_true")
     ap.add_argument("--recortar", action="store_true")
+    ap.add_argument("--filtrar", action="store_true")
     ap.add_argument("--split", action="store_true")
     ap.add_argument("--features", action="store_true")
     ap.add_argument("--tudo", action="store_true")
     ap.add_argument("--alvo", type=int, default=200, help="videos NOVOS a baixar (>= 120)")
     ap.add_argument("--limite-busca", type=int, default=10)
+    ap.add_argument("--legendas", action="store_true",
+                    help="busca legendas do YouTube (sujeito a 429; nao e necessario)")
     ap.add_argument("--tipos", default=",".join(TIPOS),
                     help="tipos a baixar (torcedor,gamer,narrador)")
     ap.add_argument("--workers", type=int, default=6)
     ap.add_argument("--manter-videos", action="store_true")
+    ap.add_argument("--limite-videos", type=int, default=0, help="so os N primeiros (teste)")
     ap.add_argument("--min-treino", type=int, default=800)
     ap.add_argument("--min-teste", type=int, default=250)
     ap.add_argument("--min-videos-teste", type=int, default=40)
     args = ap.parse_args()
-    if not (args.baixar or args.recortar or args.split or args.features or args.tudo):
-        ap.error("escolha --baixar, --recortar, --split, --features ou --tudo")
+    if not (args.baixar or args.recortar or args.filtrar or args.split or args.features or args.tudo):
+        ap.error("escolha --baixar, --recortar, --filtrar, --split, --features ou --tudo")
     if args.workers > 6:
         ap.error("maximo de 6 processos de CPU")
 
     if args.tudo or args.baixar:
         tipos = tuple(t.strip() for t in args.tipos.split(",") if t.strip())
-        etapa_baixar(args.alvo, args.limite_busca, min(4, args.workers), tipos)
+        etapa_baixar(args.alvo, args.limite_busca, min(4, args.workers), tipos, args.legendas)
     if args.tudo or args.recortar:
-        etapa_recortar(args.workers, args.manter_videos)
+        etapa_recortar(args.workers, args.manter_videos, args.limite_videos)
+    if args.tudo or args.filtrar:
+        etapa_filtrar(args.workers)
     if args.tudo or args.split:
         etapa_split(args.min_treino, args.min_teste, args.min_videos_teste)
     if args.tudo or args.features:

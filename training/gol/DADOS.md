@@ -185,3 +185,76 @@ pt-BR-AntonioNeural, pt-BR-FranciscaNeural, pt-BR-ThalitaNeural, pt-PT-DuarteNeu
   cada arquivo são zerados (contagem nos `.json` ao lado dos wavs); se sobrar
   algum grito de gol no meio do programa, ele conta como alarme — o FA/h dessa
   categoria deve ser lido com isso em mente.
+
+## Gritos humanos reais (v2, `gritos_reais.py`)
+
+O modelo v1 acertou só 3,2% dos gritos reais de narradores porque o treino não
+tinha grito humano. Esta etapa monta um conjunto de gritos humanos reais de
+"gol"/"gooool"/"golaço", verificado por transcrição, com split por vídeo.
+
+### Como reproduzir
+
+```bash
+cd training/gol
+uv sync
+uv run python gritos_reais.py --baixar --alvo 250
+uv run python gritos_reais.py --recortar --workers 6
+uv run python gritos_reais.py --filtrar --workers 6
+uv run python gritos_reais.py --split --min-treino 1 --min-teste 1 --min-videos-teste 1
+uv run python gritos_reais.py --features --workers 6
+uv run pytest -q
+```
+
+### O que cada etapa faz
+
+- `--baixar`: busca vídeos públicos no YouTube (yt-dlp) de torcedor, gamer e
+  narrador. Baixa o áudio em 16 kHz mono (formato 18; `bestaudio` como
+  fallback) e reaproveita os 24 vídeos de narração de `raw/gol_real/videos`.
+  O áudio completo é apagado depois do recorte; só os clipes ficam.
+- `--recortar`: transcreve o vídeo inteiro com faster-whisper (small, CPU,
+  `language=pt`, word timestamps) e recorta em volta de cada "gol". Se a
+  transcrição não achar gol, usa candidatos por legenda do YouTube/RMS e
+  verifica um a um. O clipe tem no máximo 3 s (0,3 s de folga).
+- `--filtrar`: descarta alucinação do whisper (texto repetido, ou sem
+  gol/golaço no trecho do clipe) e clipe que não é grito (pico RMS do clipe <
+  mediana da fala do vídeo + 6 dB).
+- `--split`: divide **por vídeo** (70/30, estratificado por tipo). Nenhum
+  vídeo aparece nos dois lados.
+- `--features`: treino → `work/real_train/` (áudio cru) e
+  `features/real_train.npy` (janela de 2 s com fundo, contrato do
+  `features.py`); teste → `work/real_test/` + `features/real_test.npy`.
+
+### Contagens desta execução (2026-11-08)
+
+| item | valor |
+|---|---|
+| vídeos novos baixados | 250 |
+| vídeos no registro | 274 (250 novos + 24 de `gol_real`) |
+| vídeos com clipe antes do filtro | 51 |
+| clipes antes do filtro | 182 |
+| descartados por alucinação do whisper | 2 |
+| descartados sem gol no trecho do clipe | 0 |
+| descartados por não ser grito (6 dB) | 119 |
+| clipes mantidos | 61 |
+| clipes de treino | 44 (21 vídeos) |
+| clipes de teste | 17 (10 vídeos) |
+| treino por tipo | gamer 27, narrador 17, torcedor 0 |
+| teste por tipo | gamer 11, narrador 6, torcedor 0 |
+| `features/real_train.npy` | (44, 16, 96) float16 |
+| `features/real_test.npy` | (17, 16, 96) float16 |
+
+O alvo original era ≥ 800 clipes de treino e ≥ 250 de teste. O conjunto
+entregue ficou abaixo porque o whisper small erra muitos gritos longos
+(transcreve "Guga", "Arugou") e o filtro de 6 dB descarta a narração em nível
+normal. O cavaleiro autorizou a entrega abaixo do alvo.
+
+### Limitações
+
+- O whisper small não reconhece boa parte dos gritos alongados. O filtro só
+  mantém o que a transcrição confirma; por isso o conjunto é menor que o
+  número de picos de energia.
+- A legenda automática do YouTube entrou como fonte auxiliar de candidatos,
+  mas sofre HTTP 429 com frequência; não é necessária para o pipeline.
+- Nenhum clipe de torcedor passou no filtro de grito nesta execução. Os 80
+  vídeos de torcedor foram baixados, mas não foram recortados antes do prazo.
+- Nada de áudio no git: clipes, features e manifesto vivem em `~/data/gol/`.

@@ -164,6 +164,33 @@ def main() -> None:
     dur_reais = sum(sf.info(str(p)).frames / sf.info(str(p)).samplerate for p in clips_reais)
     contagens["gritos_reais"] = len(clips_reais)
 
+    # ---- gritos humanos reais (treino e teste, split por video)
+    real_split = C.FEATURES / "real_split.json"
+    real_info = None
+    if real_split.exists():
+        split = json.loads(real_split.read_text(encoding="utf-8"))
+        real_info = {"descricao": "gritos humanos reais de gol, verificados por transcricao",
+                     "regra": "por video; nenhum video nos dois lados",
+                     "split": "features/real_split.json", "treino": {}, "teste": {}}
+        for nome, chave, lado in (("real_train.npy", "real_train", "treino"),
+                                  ("real_test.npy", "real_test", "teste")):
+            p_real = C.FEATURES / nome
+            exigir(p_real.exists(), f"{p_real} (rode gritos_reais.py --features)")
+            d = info_npy(p_real)
+            d.update({
+                "categoria": chave, "split": lado,
+                "descricao": "gritos humanos reais de gol (torcedor, gamer, narrador), "
+                             "janela de 2 s com fundo",
+                "clipes": int(d["shape"][0]),
+                "horas": round(d["shape"][0] * 2.0 / 3600.0, 3),
+                "videos": len(split[f"videos_{lado}"]),
+                "por_tipo": split.get(f"por_tipo_{lado}", {}),
+            })
+            arquivos.append(d)
+            contagens[chave] = int(d["shape"][0])
+            real_info[lado] = {"clipes": d["clipes"], "videos": d["videos"],
+                               "por_tipo": d["por_tipo"]}
+
     # ---- vozes e frases
     receitas_pos = C.WORK / "pos_train" / "receitas.json"
     receitas_neg = C.WORK / "neg_train" / "receitas.json"
@@ -240,6 +267,10 @@ def main() -> None:
         },
         "fontes_md": "FONTES.md",
     }
+    if real_info is not None:
+        manifesto["gritos_reais"] = real_info
+        manifesto["fontes_audio_bruto"]["gritos_reais_clipes"] = (
+            real_info["treino"]["clipes"] + real_info["teste"]["clipes"])
     MANIFESTO.write_text(json.dumps(manifesto, indent=1, ensure_ascii=False), encoding="utf-8")
     log(f"MANIFESTO.json: {MANIFESTO}")
 
