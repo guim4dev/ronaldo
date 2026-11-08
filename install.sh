@@ -63,6 +63,8 @@ echo "→ Hex abre no login"
 "$HEX" launch-at-login on >/dev/null
 
 echo "→ (re)iniciando"
+# "ronaldo off" disables the service; a disabled service refuses bootstrap.
+launchctl enable "gui/$(id -u)/$LABEL"
 launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
 launchctl bootstrap "gui/$(id -u)" "$PLIST"
 
