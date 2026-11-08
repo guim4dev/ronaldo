@@ -436,12 +436,15 @@ contados; limite superior unilateral de 95% Poisson.
   como conjunto proprio para medir a generalizacao entre falantes; a meta de
   conversa vale para a soma dos conjuntos.
 - Fala normal com "gol" no nivel da referencia: o portao barra
-  {resultado["negativos_fala"]["por_limiar"][e["limiar"]]["com"]["disparos"]} de
-  {resultado["negativos_fala"]["por_limiar"][e["limiar"]]["sem"]["disparos"]} clipes que o
-  classificador dispararia sem portao (amostra).
+  {resultado["negativos_fala"]["por_limiar"][e["limiar"]]["sem"]["disparos"] - resultado["negativos_fala"]["por_limiar"][e["limiar"]]["com"]["disparos"]}
+  de
+  {resultado["negativos_fala"]["por_limiar"][e["limiar"]]["sem"]["disparos"]} disparos
+  do classificador em {resultado["negativos_fala"]["clipes"]} clipes de fala normal (amostra).
 - Palavras curtas gritadas que nao sao "gol": o portao barra
-  {resultado["negativos_grito"]["por_limiar"][e["limiar"]]["com"]["disparos"]} de
-  {resultado["negativos_grito"]["por_limiar"][e["limiar"]]["sem"]["disparos"]} disparos.
+  {resultado["negativos_grito"]["por_limiar"][e["limiar"]]["sem"]["disparos"] - resultado["negativos_grito"]["por_limiar"][e["limiar"]]["com"]["disparos"]}
+  de
+  {resultado["negativos_grito"]["por_limiar"][e["limiar"]]["sem"]["disparos"]} disparos
+  do classificador em {resultado["negativos_grito"]["clipes"]} clipes (amostra).
 
 ## Aproximacoes (importantes)
 
