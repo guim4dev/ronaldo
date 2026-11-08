@@ -26,6 +26,7 @@ uv run python gerar_negativos.py --n-fala 17000 --n-grito 3000 --workers 8
 # 4) features (mesmo pipeline do ronaldo/detector.py)
 uv run python features.py --curtos
 uv run python features.py --streaming --horas-avaliacao 8.5
+uv run python features.py --conversa-futebol   # so avaliacao
 
 # 5) manifesto e resumo
 uv run python manifesto.py
@@ -49,6 +50,7 @@ raw/            áudio bruto, 16 kHz mono (exceto o .npy do openWakeWord)
   speech_ptbr/  MLS português (~18 h) por falante
   game/         futebol de videogame via yt-dlp (~16 h)
   gol_real/     narrações de gol recortadas (>= 60 clipes <= 3 s)
+  conversa_futebol/  mesa redonda/podcast pt-BR de futebol (so avaliacao)
 work/           wavs sintéticos de 2 s (pos_train, pos_test, neg_train)
 features/       .npy prontos para o treino
 MANIFESTO.json  arquivos, formas, horas, split, vozes
@@ -81,6 +83,13 @@ da rota de clipe com `WakeWord._embed_clip` (tolerância zero em `float32`).
 - **Longos**: split por fonte, nunca por trecho do mesmo arquivo — falante MLS
   (conversa), vídeo (jogo), faixa (música). Nenhuma fonte aparece nos dois
   lados. O detalhe fica em `features/split_streaming.json`.
+- **`conversa_futebol`**: só avaliação. São programas de estúdio (mesa redonda
+  pós-jogo e debate esportivo) baixados do YouTube: vários falantes, futebol o
+  tempo todo, sem transmissão de jogo. Nada dessa categoria entra no treino —
+  o `manifesto.py` falha se aparecer `stream_conversa_futebol_treino*`.
+  Nos wavs, trechos acima de +12 dB da mediana de fala do próprio arquivo
+  (grito, vaia, vinheta alta) são zerados e a contagem fica num `.json` ao
+  lado: um grito de gol ali seria um verdadeiro positivo, não um falso alarme.
 
 ## Aumento "grito" (treino dos positivos)
 
@@ -125,6 +134,7 @@ Ver `~/data/gol/FONTES.md` (URL, licença, destino, data). Resumo:
 | conversa pt-BR (streaming) | treino 13.49 h / avaliação 8.49 h |
 | jogo de videogame (streaming) | treino 10.14 h / avaliação 9.47 h |
 | música (streaming) | treino 17.52 h / avaliação 8.50 h |
+| conversa de futebol (streaming) | **só avaliação** — 10.67 h, 5 programas de estúdio |
 | negativos gerais do openWakeWord | 5 625 000 clipes de 2 s (raw/openwakeword/openwakeword_features_ACAV100M_2000_hrs_16bit.npy) |
 | validação do openWakeWord | 481 345 chunks (10.7 h) |
 
@@ -134,9 +144,11 @@ pt-BR-AntonioNeural, pt-BR-FranciscaNeural, pt-BR-ThalitaNeural, pt-PT-DuarteNeu
 
 ## Conferências (o que foi medido, não só gerado)
 
-- `uv run pytest -q` — 7 testes; o principal compara, chunk por chunk, as
-  features de streaming com `WakeWord.scores` e a rota de clipe com
-  `WakeWord._embed_clip` (igualdade exata em `float32`).
+- `uv run pytest -q` — 13 testes. `test_pipeline.py` compara, chunk por chunk,
+  as features de streaming com `WakeWord.scores` e a rota de clipe com
+  `WakeWord._embed_clip` (igualdade exata em `float32`). `test_manifesto.py`
+  confere o `MANIFESTO.json` contra o disco: arquivos, formas, dtype, horas,
+  contagens e `conversa_futebol` só em avaliação.
 - Distribuição das features geradas x features publicadas do openWakeWord
   (mesma escala, então a conta está certa):
 
@@ -145,14 +157,16 @@ pt-BR-AntonioNeural, pt-BR-FranciscaNeural, pt-BR-ThalitaNeural, pt-PT-DuarteNeu
   | `pos_train.npy` | (20000, 16, 96) | float16 | 1,84 | 15,3 |
   | `neg_train.npy` | (20000, 16, 96) | float16 | 1,88 | 16,8 |
   | `pos_test.npy` | (1000, 16, 96) | float16 | 1,90 | 15,4 |
+  | `stream_conversa_futebol_avaliacao` | (480127, 96) | float16 | 1,86 | 16,4 |
   | ACAV do openWakeWord | (5625000, 16, 96) | float16 | 1,89 | 16,2 |
   | validation_set do openWakeWord | (481345, 96) | float32 | 1,88 | 15,9 |
 
 - Pitch do aumento "grito": medido por autocorrelação em amostras
   (`semitons` 3–4 ⇒ F0 sobe ~25–35 %), e a duração do clipe cresce junto.
-- `manifesto.py` falha se faltar peça do contrato (≥ 8 h de avaliação por
-  categoria, 20 mil positivos/negativos, 1 000 positivos de teste, ≥ 60 gritos
-  reais), então o `MANIFESTO.json` só existe se tudo estiver no lugar.
+- `manifesto.py` falha se faltar peça do contrato (≥ 8 h de avaliação nas três
+  categorias longas, ≥ 4 h em `conversa_futebol` com nada no treino, 20 mil
+  positivos/negativos, 1 000 positivos de teste, ≥ 60 gritos reais), então o
+  `MANIFESTO.json` só existe se tudo estiver no lugar.
 
 ## Limitações conhecidas
 
@@ -165,3 +179,9 @@ pt-BR-AntonioNeural, pt-BR-FranciscaNeural, pt-BR-ThalitaNeural, pt-PT-DuarteNeu
   um: são trechos de 2,4 s em torno do pico de RMS do vídeo, como o plano pede
   ("recortados em torno do grito").
 - `gol_real` é só para avaliação local; nunca entra no git.
+- `conversa_futebol`: 5 programas de estúdio (mesa redonda pós-jogo e debate),
+  baixados como áudio de vídeo (formato 18, 360p) porque o YouTube recusa as
+  faixas só de áudio neste IP. Trechos acima de +12 dB da mediana de fala de
+  cada arquivo são zerados (contagem nos `.json` ao lado dos wavs); se sobrar
+  algum grito de gol no meio do programa, ele conta como alarme — o FA/h dessa
+  categoria deve ser lido com isso em mente.

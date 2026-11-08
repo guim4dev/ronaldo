@@ -14,6 +14,8 @@ Etapas (--etapa):
   speech        MLS portugues: tarballs de falantes ate >= 18 h -> wav 16 kHz mono
   game          futebol de videogame via yt-dlp (Rematch/FIFA sem narracao) >= 16 h
   gol_real      narracoes de gol brasileiras via yt-dlp, recortadas em clipes <= 3 s
+  conversa_futebol  mesa redonda/podcast pt-BR de futebol (so avaliacao):
+                    >= 8 h de conversa espontanea, sem narracao de gol
   all           todas as etapas, nesta ordem
 
 Uso:
@@ -132,6 +134,7 @@ def escrever_fontes() -> None:
         return
     videos_jogo = set()
     videos_gol = set()
+    videos_conversa = set()
     contagem = {"rir": 0, "piper": 0, "mls": 0, "parquet": 0}
     for ln in FONTES_JSONL.read_text(encoding="utf-8").splitlines():
         if not ln.strip():
@@ -147,6 +150,8 @@ def escrever_fontes() -> None:
             videos_jogo.add(d["url"])
         if d["destino"].startswith("raw/gol_real/videos/") and "youtube.com/watch" in d.get("url", ""):
             videos_gol.add(d["url"])
+        if d["destino"].startswith("raw/conversa_futebol/") and "youtube.com/watch" in d.get("url", ""):
+            videos_conversa.add(d["url"])
         if d["destino"].startswith("raw/rir/"):
             contagem["rir"] += 1
         if d["destino"].startswith("raw/piper/vozes/"):
@@ -186,6 +191,7 @@ def escrever_fontes() -> None:
         f"- Shards parquet (FMA e ESC-50): {contagem['parquet']}.",
         f"- Videos de jogo de videogame: {len(videos_jogo)}.",
         f"- Videos de narracao de gol: {len(videos_gol)}.",
+        f"- Programas de conversa de futebol (avaliacao): {len(videos_conversa)}.",
         "",
         "## Videos do YouTube usados",
         "",
@@ -193,6 +199,9 @@ def escrever_fontes() -> None:
         "",
     ]
     for url in sorted(videos_jogo):
+        out.append(f"- {url}")
+    out += ["", "### Conversa de futebol (avaliacao; mesa redonda/podcast)", ""]
+    for url in sorted(videos_conversa):
         out.append(f"- {url}")
     out += ["", "### Narracoes de gol (avaliacao; nunca no git)", ""]
     for url in sorted(videos_gol):
@@ -624,7 +633,7 @@ def _yt_busca(consulta: str, n: int = 8) -> list[dict]:
     return itens
 
 
-def _yt_audio(video_id: str, destino: Path) -> Path:
+def _yt_audio(video_id: str, destino: Path, rotulo: str = "audio de jogo") -> Path:
     """Baixa so o audio e converte para wav 16 kHz mono."""
     destino.parent.mkdir(parents=True, exist_ok=True)
     if destino.exists() and destino.stat().st_size > 1000:
@@ -648,8 +657,8 @@ def _yt_audio(video_id: str, destino: Path) -> Path:
     if candidato.exists() and candidato != destino:
         candidato.replace(destino)
     if destino.exists():
-        registrar(f"YouTube {video_id} (audio de jogo)", f"https://www.youtube.com/watch?v={video_id}",
-                  destino, "conteudo de terceiros, uso local para avaliacao/treino")
+        registrar(f"YouTube {video_id} ({rotulo})", f"https://www.youtube.com/watch?v={video_id}",
+                  destino, "conteudo de terceiros, uso local para avaliacao")
     return destino
 
 
@@ -798,6 +807,160 @@ def etapa_gol_real() -> None:
               clips, "conteudo de terceiros, uso local de avaliacao; nunca no git")
 
 
+CONSULTAS_CONVERSA_FUTEBOL = [
+    "mesa redonda futebol podcast",
+    "resenha futebol podcast brasileiro",
+    "debate futebol brasileiro podcast",
+    "podcast futebol brasileiro mesa redonda",
+    "programa esportivo debate futebol",
+    "roda de conversa futebol podcast",
+    "podcast futebol flamengo corinthians",
+    "mesa redonda esportiva futebol brasileiro",
+]
+PALAVRAS_ESTUDIO = (
+    "podcast", "mesa redonda", "resenha", "debate", "programa", "roda de conversa",
+    "papo", "boteco", "cast", "talk show", "entrevista",
+)
+PALAVRAS_FUTEBOL = (
+    "futebol", "seleção", "selecao", "brasileirão", "brasileirao", "flamengo",
+    "corinthians", "palmeiras", "são paulo", "sao paulo", "santos", "grêmio", "gremio",
+    "cruzeiro", "vasco", "botafogo", "fluminense", "atlético", "atletico", "bahia",
+    "sport", "fortaleza", "ceará", "ceara", "internacional", "copa", "libertadores",
+    "neymar", "ronaldo", "romário", "romario", "vampeta", "denílson", "denilson",
+)
+PALAVRAS_PROIBIDAS = (
+    "narração", "narracao", "narrador", "melhores momentos", "jogo completo",
+    "transmissão", "transmissao", "gameplay", "trailer", "highlights",
+    "todos os gols", "gols do jogo", "ao vivo no estádio", "no estádio",
+)
+
+
+def _remover_gritos(x: np.ndarray, limiar_db: float = 12.0) -> tuple[np.ndarray, dict]:
+    """Zera trechos de grito/torcida para a conversa de avaliacao medir so fala.
+
+    Um grito de gol dentro do podcast e um verdadeiro positivo, nao um falso
+    alarme: deixa-lo no conjunto contaminaria o FA/h. O limiar e relativo a
+    mediana de fala do proprio arquivo (robusto a ganho de gravacao).
+    """
+    passo = int(SR * 0.05)
+    env = _envelope_rms(x, passo * 2, passo)
+    if len(env) == 0:
+        return x, {"janelas_removidas": 0, "segundos_removidos": 0.0}
+    db = 20 * np.log10(np.maximum(env, 1e-6))
+    fala = db[db > -50]
+    if len(fala) == 0:
+        return x, {"janelas_removidas": 0, "segundos_removidos": 0.0}
+    limiar = float(np.percentile(fala, 50)) + limiar_db
+    mascara = db > limiar
+    y = x.copy()
+    removidas = 0
+    segundos = 0.0
+    i = 0
+    while i < len(mascara):
+        if not mascara[i]:
+            i += 1
+            continue
+        j = i
+        while j < len(mascara) and mascara[j]:
+            j += 1
+        if (j - i) >= 6:  # >= 300 ms de som alto: grito, vaia ou torcida
+            ini = max(0, int((i - 15) * passo))
+            fim = min(len(y), int((j + 15) * passo))
+            y[ini:fim] = 0.0
+            removidas += 1
+            segundos += (fim - ini) / SR
+        i = j
+    return y, {"janelas_removidas": removidas, "segundos_removidos": round(segundos, 2)}
+
+
+def _candidatos_conversa_futebol() -> list[dict]:
+    vistos: set[str] = set()
+    candidatos: list[dict] = []
+    for consulta in CONSULTAS_CONVERSA_FUTEBOL:
+        for item in _yt_busca(consulta, n=8):
+            if item["id"] in vistos:
+                continue
+            vistos.add(item["id"])
+            titulo = item["titulo"].lower()
+            if any(x in titulo for x in PALAVRAS_PROIBIDAS):
+                continue
+            if not any(x in titulo for x in PALAVRAS_ESTUDIO):
+                continue
+            if not any(x in titulo for x in PALAVRAS_FUTEBOL):
+                continue
+            if item["dur"] < 1200 or item["dur"] > 5 * 3600:
+                continue
+            candidatos.append(item)
+    candidatos.sort(key=lambda x: -x["dur"])
+    return candidatos
+
+
+def _baixar_conversa(item_id: str) -> Path:
+    bruto = RAW / "conversa_futebol" / "bruto"
+    final = RAW / "conversa_futebol" / "wav"
+    final.mkdir(parents=True, exist_ok=True)
+    alvo = final / f"{item_id}.wav"
+    if alvo.exists() and alvo.stat().st_size > 1000:
+        return alvo
+    p = _yt_audio(item_id, bruto / f"{item_id}.wav", rotulo="conversa de futebol")
+    if not p.exists():
+        return alvo
+    x, sr = ler_audio(p)
+    x = resample(x, sr)
+    y, info = _remover_gritos(x)
+    salvar_wav16(alvo, y)
+    (final / f"{item_id}.json").write_text(
+        json.dumps({"video": item_id, **info, "segundos_totais": round(len(y) / SR, 1)},
+                   ensure_ascii=False), encoding="utf-8")
+    return alvo
+
+
+def etapa_conversa_futebol() -> None:
+    """Conversa espontanea pt-BR de futebol (mesa redonda/podcast) so para avaliacao.
+
+    Alvo >= 8 h; se o YouTube throttlar, aceita >= 4 h e registra o numero real.
+    """
+    destino = RAW / "conversa_futebol" / "wav"
+    destino.mkdir(parents=True, exist_ok=True)
+    horas = sum(duracao(p) for p in destino.glob("*.wav")) / 3600.0
+    log(f"conversa_futebol: {horas:.2f} h ja baixadas")
+    if horas >= 8.0:
+        log(f"conversa_futebol pronto: {horas:.2f} h")
+        return
+    candidatos = _candidatos_conversa_futebol()
+    log(f"conversa_futebol: {len(candidatos)} candidatos")
+    from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        fila = list(candidatos)
+        pendentes = {}
+        while (fila or pendentes) and horas < 8.3:
+            while fila and len(pendentes) < 2:
+                item = fila.pop(0)
+                if (destino / f"{item['id']}.wav").exists():
+                    continue
+                pendentes[pool.submit(_baixar_conversa, item["id"])] = item
+            if not pendentes:
+                break
+            prontos, _ = wait(pendentes, return_when=FIRST_COMPLETED)
+            for f in prontos:
+                item = pendentes.pop(f)
+                p = f.result()
+                if p.exists():
+                    horas += duracao(p) / 3600.0
+                    log(f"conversa_futebol: {horas:.2f} h ({item['id']})")
+            if horas >= 8.3:
+                for f in pendentes:
+                    f.cancel()
+                break
+    horas = sum(duracao(p) for p in destino.glob("*.wav")) / 3600.0
+    if horas < 4.0:
+        raise SystemExit(f"conversa_futebol rendeu so {horas:.2f} h (minimo aceito 4 h)")
+    if horas < 8.0:
+        log(f"AVISO conversa_futebol: {horas:.2f} h (YouTube throttlou; abaixo das 8 h)")
+    log(f"conversa_futebol pronto: {horas:.2f} h")
+
+
 ETAPAS = {
     "openwakeword": etapa_openwakeword,
     "piper": etapa_piper,
@@ -807,8 +970,10 @@ ETAPAS = {
     "speech": etapa_speech,
     "game": etapa_game,
     "gol_real": etapa_gol_real,
+    "conversa_futebol": etapa_conversa_futebol,
 }
-ORDEM = ["openwakeword", "piper", "rir", "noise", "music", "speech", "game", "gol_real"]
+ORDEM = ["openwakeword", "piper", "rir", "noise", "music", "speech", "game", "gol_real",
+         "conversa_futebol"]
 
 
 def main() -> None:
