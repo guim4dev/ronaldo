@@ -1,5 +1,7 @@
 # Resultados do `gol_grito`
 
+**Experimental e não recomendado para uso:** cumpre 1/3 metas, acerta 43,8% no limiar 0,9 e detectou 0/17 gritos humanos reais. Não habilite a rota até cumprir as metas e passar pela aceitação ao vivo (`tools/grito_ao_vivo.py`).
+
 Gerado por `uv run python eval.py --resumo --markdown RESULTADOS.md` em
 2026-11-08 04:18. Modelo: `models/gol_grito.onnx`
 (198.4 KB, entrada [1, 16, 96], saida [1, 1]).

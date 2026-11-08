@@ -8,4 +8,6 @@
 | `ronaldo_ptbr.onnx` | trained for this project with synthetic pt-BR voices (Piper), on top of the openWakeWord feature extractor | [CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/) © Thiago Guimarães — same terms as the openWakeWord models it depends on |
 | `gol_grito.onnx` | trained for this project (goal-shout classifier) with synthetic pt-BR voices and public narration clips, on top of the openWakeWord feature extractor | [CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/) © Thiago Guimarães — same terms as the `ronaldo_ptbr` model |
 
+`gol_grito.onnx` is experimental and not recommended for use; it does not meet its performance goals.
+
 The code in this repository is MIT (see [`LICENSE`](../LICENSE)); the models keep the licenses above.
