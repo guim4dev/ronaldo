@@ -26,7 +26,6 @@ from __future__ import annotations
 import argparse
 import io
 import json
-import re
 import os
 import shutil
 import subprocess
@@ -88,25 +87,125 @@ def registrar(titulo: str, url: str, destino: Path, licenca: str = "", nota: str
             f.write(json.dumps(linha, ensure_ascii=False) + "\n")
 
 
+FONTES_PRINCIPAIS = [
+    ("openWakeWord: features ACAV100M (5.625 M clipes de 2 s)",
+     "https://huggingface.co/datasets/davidscripka/openwakeword_features", "CC-BY 4.0"),
+    ("openWakeWord: validation_set_features (~10.7 h de streaming)",
+     "https://huggingface.co/datasets/davidscripka/openwakeword_features", "CC-BY 4.0"),
+    ("Piper: binario 2023.11.14-2 (linux x86_64 + espeak-ng)",
+     "https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_linux_x86_64.tar.gz", "MIT / GPL (espeak-ng)"),
+    ("Piper: vozes pt_BR faber, edresson, cadu, jeff",
+     "https://huggingface.co/rhasspy/piper-voices", "MIT / ver MODEL_CARD de cada voz"),
+    ("MIT environmental impulse responses (270 RIRs a 16 kHz)",
+     "https://huggingface.co/datasets/davidscripka/MIT_environmental_impulse_responses", "MIT IR Survey"),
+    ("ESC-50 (2 000 clipes de ruido ambiente)",
+     "https://huggingface.co/datasets/ashraq/esc50", "CC-BY-NC 3.0"),
+    ("FMA small (8 000 faixas de 30 s; 6 shards usados)",
+     "https://huggingface.co/datasets/benjamin-paine/free-music-archive-small", "CC-BY / CC-BY-SA / CC0 por faixa"),
+    ("MLS portugues (tarballs de falante do OPUS)",
+     "https://huggingface.co/datasets/facebook/multilingual_librispeech", "CC-BY 4.0"),
+    ("edge-tts (vozes reservadas de teste: pt-BR Francisca/Antonio/Thalita, pt-PT Raquel/Duarte)",
+     "https://pypi.org/project/edge-tts/", "termos do servico Microsoft"),
+    ("Audio de jogo de futebol de videogame (yt-dlp, bestaudio 16 kHz mono)",
+     "https://www.youtube.com (videos listados abaixo)", "conteudo de terceiros, uso local"),
+    ("Narracoes de gol brasileiras recortadas (yt-dlp, clipes <= 3 s)",
+     "https://www.youtube.com (videos listados abaixo)", "conteudo de terceiros, uso local"),
+]
+
+DERIVADOS = [
+    ("raw/music/wav/", "3 127 faixas de 30 s decodificadas de raw/music/parquet (16 kHz mono)"),
+    ("raw/noise/wav/", "2 000 clipes de 5 s decodificados de raw/noise/parquet (16 kHz mono)"),
+    ("raw/speech_ptbr/wav/", "5 000 audios do MLS portugues (tarballs em raw/speech_ptbr/tar)"),
+    ("raw/gol_real/clips/", "125 trechos de 2,4 s recortados nos picos de volume das narracoes"),
+    ("work/tts_positivos/", "bases TTS do Piper (voz x texto x parametros)"),
+    ("work/tts_negativos/", "bases TTS das frases de fala normal e das palavras gritadas"),
+    ("work/pos_train/", "20 000 positivos de 2 s com aumento de grito"),
+    ("work/pos_test/", "1 000 positivos de teste (vozes reservadas; metade com jogo)"),
+    ("work/neg_train/", "20 000 negativos de 2 s (fala normal + palavras gritadas)"),
+    ("features/", "features openWakeWord (.npy) e RMS dBFS por chunk"),
+]
+
+
 def escrever_fontes() -> None:
-    """Renderiza $GOL_DATA/FONTES.md a partir de fontes.jsonl."""
+    """Renderiza $GOL_DATA/FONTES.md: fontes principais, derivados e videos usados."""
     if not FONTES_JSONL.exists():
         return
-    linhas = [json.loads(ln) for ln in FONTES_JSONL.read_text(encoding="utf-8").splitlines() if ln.strip()]
+    videos_jogo = set()
+    videos_gol = set()
+    contagem = {"rir": 0, "piper": 0, "mls": 0, "parquet": 0}
+    for ln in FONTES_JSONL.read_text(encoding="utf-8").splitlines():
+        if not ln.strip():
+            continue
+        try:
+            d = json.loads(ln)
+        except json.JSONDecodeError:
+            continue
+        destino = ROOT / d["destino"] if not Path(d["destino"]).is_absolute() else Path(d["destino"])
+        if not destino.exists():
+            continue
+        if d["destino"].startswith("raw/game/") and "youtube.com/watch" in d.get("url", ""):
+            videos_jogo.add(d["url"])
+        if d["destino"].startswith("raw/gol_real/videos/") and "youtube.com/watch" in d.get("url", ""):
+            videos_gol.add(d["url"])
+        if d["destino"].startswith("raw/rir/"):
+            contagem["rir"] += 1
+        if d["destino"].startswith("raw/piper/vozes/"):
+            contagem["piper"] += 1
+        if "mls_portuguese" in d.get("url", ""):
+            contagem["mls"] += 1
+        if "/parquet/" in d["destino"]:
+            contagem["parquet"] += 1
+
     out = [
         "# Fontes dos dados de treino e avaliacao — gol_grito",
         "",
         "Gerado por `training/gol/download.py`. Todo audio vive em `~/data/gol/` (fora do git).",
         "Repositorio publico: nenhum arquivo de audio e versionado.",
         "",
-        "| data | o que | destino | URL | licenca |",
-        "|---|---|---|---|---|",
+        "## Fontes principais",
+        "",
+        "| fonte | URL | licenca |",
+        "|---|---|---|",
     ]
-    for d in linhas:
-        url = d["url"]
-        out.append(
-            f"| {d['data']} | {d['titulo']} | `{d['destino']}` | <{url}> | {d.get('licenca','')} |"
-        )
+    for titulo, url, licenca in FONTES_PRINCIPAIS:
+        out.append(f"| {titulo} | <{url}> | {licenca} |")
+
+    out += ["", "## Arquivos derivados (sem URL propria)", "",
+            "| caminho | o que |", "|---|---|"]
+    for caminho, descricao in DERIVADOS:
+        if (ROOT / caminho.rstrip("/")).exists():
+            out.append(f"| `{caminho}` | {descricao} |")
+
+    out += [
+        "",
+        "## Downloads conferidos",
+        "",
+        f"- RIRs MIT: {contagem['rir']} arquivos de 16 kHz.",
+        f"- Vozes Piper: {contagem['piper']} arquivos (.onnx, .onnx.json, MODEL_CARD).",
+        f"- Tarballs do MLS portugues: {contagem['mls']}.",
+        f"- Shards parquet (FMA e ESC-50): {contagem['parquet']}.",
+        f"- Videos de jogo de videogame: {len(videos_jogo)}.",
+        f"- Videos de narracao de gol: {len(videos_gol)}.",
+        "",
+        "## Videos do YouTube usados",
+        "",
+        "### Jogo de videogame (audio de fundo e avaliacao)",
+        "",
+    ]
+    for url in sorted(videos_jogo):
+        out.append(f"- {url}")
+    out += ["", "### Narracoes de gol (avaliacao; nunca no git)", ""]
+    for url in sorted(videos_gol):
+        out.append(f"- {url}")
+    out += [
+        "",
+        "## Ferramentas",
+        "",
+        "- `piper` 2023.11.14-2 (MIT) e `espeak-ng` (GPL).",
+        "- `edge-tts` (vozes da Microsoft; so no conjunto de teste).",
+        "- `yt-dlp` (Unlicense) para os audios de jogo e narrativas.",
+        "- `ffmpeg` (LGPL/GPL) para rubberband, resample e recorte.",
+    ]
     (ROOT / "FONTES.md").write_text("\n".join(out) + "\n", encoding="utf-8")
 
 
@@ -360,7 +459,13 @@ def _decodificar_parquet_audio(parquets: list[Path], destino: Path, prefixo: str
     import soundfile as sf
 
     destino.mkdir(parents=True, exist_ok=True)
+    marcador = destino / ".pronto"
+    if marcador.exists():
+        horas = sum(duracao(p) for p in destino.glob("*.wav")) / 3600.0
+        log(f"{destino}: ja decodificado ({len(list(destino.glob('*.wav')))} wavs, {horas:.2f} h)")
+        return horas
     horas = 0.0
+    indice_global = 0
     for pq_path in parquets:
         pf = pq.ParquetFile(pq_path)
         colunas = pf.schema_arrow.names
@@ -375,10 +480,12 @@ def _decodificar_parquet_audio(parquets: list[Path], destino: Path, prefixo: str
             col = lote.column(col_audio).to_pylist()
             ids = lote.column(col_id).to_pylist() if col_id else [None] * len(col)
             for ident, item in zip(ids, col):
-                parte = re.sub(r"[^A-Za-z0-9._-]+", "_", Path(str(ident)).stem)[:60] if ident else ""
-                nome = f"{pq_path.stem}_{indice:05d}" + (f"_{parte}" if parte else "")
+                # nome deterministico: prefixo + indice global (ordem de leitura
+                # dos parquets). Assim uma segunda execucao pula tudo e nao
+                # duplica o acervo.
                 indice += 1
-                saida = destino / f"{prefixo}_{nome}.wav"
+                saida = destino / f"{prefixo}_{indice_global:05d}.wav"
+                indice_global += 1
                 if saida.exists():
                     horas += duracao(saida) / 3600.0
                     continue
@@ -399,6 +506,7 @@ def _decodificar_parquet_audio(parquets: list[Path], destino: Path, prefixo: str
                     continue
                 salvar_wav16(saida, x)
                 horas += dur / 3600.0
+    marcador.write_text(str(indice_global), encoding="utf-8")
     return horas
 
 
@@ -639,9 +747,9 @@ def etapa_gol_real() -> None:
             p = _yt_audio(item["id"], videos / f"{item['id']}.wav")
             if p.exists():
                 baixados += 1
-            if baixados >= 12:
+            if baixados >= 20:
                 break
-        if baixados >= 12:
+        if baixados >= 20:
             break
     log(f"gol_real: {baixados} videos de narracao")
 

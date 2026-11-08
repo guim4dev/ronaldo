@@ -31,7 +31,7 @@ import json
 import os
 import random
 import time
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
 import numpy as np
@@ -218,9 +218,10 @@ def converter_curtos(entrada: Path, saida: Path, workers: int = 8) -> np.ndarray
 # split de audio longo por fonte
 # --------------------------------------------------------------------------- #
 def _chave_fonte(categoria: str, caminho: Path) -> str:
-    if categoria == "speech_ptbr":
-        return caminho.stem.split("_")[0]  # falante MLS
-    return caminho.stem  # video ou faixa
+    # Sempre por arquivo: nenhum arquivo aparece nos dois lados. Para conversa
+    # o MLS pt disponivel e dominado por um falante (2961) em varios capitulos;
+    # separar por falante deixaria a avaliacao toda de um lado so.
+    return caminho.stem
 
 
 def planejar_split(categoria: str, horas_avaliacao: float, seed: int = 7) -> dict:
@@ -244,12 +245,17 @@ def planejar_split(categoria: str, horas_avaliacao: float, seed: int = 7) -> dic
         return info.frames / info.samplerate / 3600.0
 
     total = sum(dur_h(a) for a in arquivos)
+    max_aval = total - 8.0  # o treino tambem precisa de >= 8 h
+    if max_aval < horas_avaliacao:
+        raise SystemExit(f"{categoria}: total {total:.2f} h nao permite 8 h de cada lado")
+    # grupos maiores primeiro; so adiciona o que nao estoura o teto do treino
+    chaves.sort(key=lambda k: -sum(dur_h(a) for a in grupos[k]))
     avaliacao: list[Path] = []
     treino: list[Path] = []
     h_aval = 0.0
     for chave in chaves:
         d = sum(dur_h(a) for a in grupos[chave])
-        if h_aval < horas_avaliacao:
+        if h_aval < horas_avaliacao and h_aval + d <= max_aval + 1e-9:
             avaliacao.extend(grupos[chave])
             h_aval += d
         else:
@@ -266,7 +272,19 @@ def planejar_split(categoria: str, horas_avaliacao: float, seed: int = 7) -> dic
             "treino": [str(a) for a in sorted(treino)]}
 
 
-def converter_streaming(categoria: str, plano: dict) -> list[dict]:
+def _stream_worker(arquivos: list[str]) -> tuple[np.ndarray, np.ndarray]:
+    """Converte uma lista de arquivos no processo filho (cada um tem suas sessoes ORT)."""
+    feats, rms = [], []
+    for arquivo in arquivos:
+        f, r = features_streaming(Path(arquivo))
+        feats.append(f)
+        rms.append(r)
+    if not feats:
+        return np.zeros((0, DIM), np.float16), np.zeros((0,), np.float32)
+    return np.concatenate(feats), np.concatenate(rms)
+
+
+def converter_streaming(categoria: str, plano: dict, workers: int = 4) -> list[dict]:
     registros = []
     for split, arquivos in (("treino", plano["treino"]), ("avaliacao", plano["avaliacao"])):
         saida_f = FEAT / f"stream_{categoria}_{split}_features.npy"
@@ -277,16 +295,20 @@ def converter_streaming(categoria: str, plano: dict) -> list[dict]:
             log(f"{saida_f.name}: ja existe ({meta['chunks']} chunks, {meta['horas']:.2f} h)")
             registros.append(meta)
             continue
-        feats, rms = [], []
         t0 = time.time()
-        for i, arquivo in enumerate(arquivos, 1):
-            f, r = features_streaming(Path(arquivo))
-            feats.append(f)
-            rms.append(r)
-            if i % 5 == 0 or i == len(arquivos):
-                log(f"  {categoria}/{split}: {i}/{len(arquivos)} ({time.time()-t0:.0f}s)")
-        feats_arr = np.concatenate(feats) if feats else np.zeros((0, DIM), np.float16)
-        rms_arr = np.concatenate(rms) if rms else np.zeros((0,), np.float32)
+        partes = [arquivos[i::workers] for i in range(workers)]
+        pedacos: dict[int, tuple[np.ndarray, np.ndarray]] = {}
+        with ProcessPoolExecutor(max_workers=workers) as pool:
+            futuros = {pool.submit(_stream_worker, p): i for i, p in enumerate(partes) if p}
+            for n, f in enumerate(as_completed(futuros), 1):
+                pedacos[futuros[f]] = f.result()
+                log(f"  {categoria}/{split}: lote {n}/{len(futuros)} ({time.time()-t0:.0f}s)")
+        if pedacos:
+            feats_arr = np.concatenate([pedacos[i][0] for i in sorted(pedacos)])
+            rms_arr = np.concatenate([pedacos[i][1] for i in sorted(pedacos)])
+        else:
+            feats_arr = np.zeros((0, DIM), np.float16)
+            rms_arr = np.zeros((0,), np.float32)
         FEAT.mkdir(parents=True, exist_ok=True)
         np.save(saida_f, feats_arr)
         np.save(saida_r, rms_arr)
@@ -328,7 +350,7 @@ def main() -> None:
         for categoria in ("speech_ptbr", "game", "music"):
             plano = planejar_split(categoria, args.horas_avaliacao)
             planos.append(plano)
-            converter_streaming(categoria, plano)
+            converter_streaming(categoria, plano, args.workers)
         (FEAT / "split_streaming.json").write_text(
             json.dumps(planos, indent=1, ensure_ascii=False), encoding="utf-8")
     if args.tudo or args.curtos:

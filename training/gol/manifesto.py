@@ -150,6 +150,8 @@ def main() -> None:
     # fontes de audio longo
     def contar(categoria: str) -> int:
         pasta = C.RAW / categoria / "wav"
+        if not pasta.exists():
+            pasta = C.RAW / categoria
         return len(list(pasta.glob("*.wav"))) if pasta.exists() else 0
 
     manifesto = {

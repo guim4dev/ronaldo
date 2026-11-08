@@ -109,3 +109,59 @@ Ver `~/data/gol/FONTES.md` (URL, licença, destino, data). Resumo:
 | YouTube (yt-dlp) | jogo de futebol de videogame e narrações de gol | conteúdo de terceiros, uso local |
 
 Áudio de terceiros **nunca** entra no git: só scripts, docs e o modelo final.
+
+## Contagens e horas (deste preparo, hemocione-one)
+
+| item | valor |
+|---|---|
+| positivos de treino | 20 000 clipes de 2 s (11.1 h de áudio) |
+| negativos de treino | 20 000 clipes de 2 s (11.1 h de áudio) |
+| positivos de teste | 1 000 clipes de 2 s (500 limpos + 500 com jogo) |
+| gritos reais recortados | 125 clipes ≤ 3 s |
+| frases com "gol" | 314 (exigido ≥ 300) |
+| frases com palavras parecidas | 123 |
+| frases neutras de conversa | 156 |
+| palavras curtas gritadas (não é gol) | 6 |
+| conversa pt-BR (streaming) | treino 13.49 h / avaliação 8.49 h |
+| jogo de videogame (streaming) | treino 10.14 h / avaliação 9.47 h |
+| música (streaming) | treino 17.52 h / avaliação 8.50 h |
+| negativos gerais do openWakeWord | 5 625 000 clipes de 2 s (raw/openwakeword/openwakeword_features_ACAV100M_2000_hrs_16bit.npy) |
+| validação do openWakeWord | 481 345 chunks (10.7 h) |
+
+Vozes de treino: Piper cadu, edresson, faber.
+Vozes de teste (nunca vistas no treino): Piper jeff e edge-tts
+pt-BR-AntonioNeural, pt-BR-FranciscaNeural, pt-BR-ThalitaNeural, pt-PT-DuarteNeural, pt-PT-RaquelNeural.
+
+## Conferências (o que foi medido, não só gerado)
+
+- `uv run pytest -q` — 7 testes; o principal compara, chunk por chunk, as
+  features de streaming com `WakeWord.scores` e a rota de clipe com
+  `WakeWord._embed_clip` (igualdade exata em `float32`).
+- Distribuição das features geradas x features publicadas do openWakeWord
+  (mesma escala, então a conta está certa):
+
+  | conjunto | shape | dtype | média | desvio |
+  |---|---|---|---|---|
+  | `pos_train.npy` | (20000, 16, 96) | float16 | 1,84 | 15,3 |
+  | `neg_train.npy` | (20000, 16, 96) | float16 | 1,88 | 16,8 |
+  | `pos_test.npy` | (1000, 16, 96) | float16 | 1,90 | 15,4 |
+  | ACAV do openWakeWord | (5625000, 16, 96) | float16 | 1,89 | 16,2 |
+  | validation_set do openWakeWord | (481345, 96) | float32 | 1,88 | 15,9 |
+
+- Pitch do aumento "grito": medido por autocorrelação em amostras
+  (`semitons` 3–4 ⇒ F0 sobe ~25–35 %), e a duração do clipe cresce junto.
+- `manifesto.py` falha se faltar peça do contrato (≥ 8 h de avaliação por
+  categoria, 20 mil positivos/negativos, 1 000 positivos de teste, ≥ 60 gritos
+  reais), então o `MANIFESTO.json` só existe se tudo estiver no lugar.
+
+## Limitações conhecidas
+
+- O MLS português disponível sem login está concentrado num falante (2961) em
+  quatro capítulos. O split é por arquivo (nenhum arquivo nos dois lados), mas a
+  mesma voz aparece no treino e na avaliação — o FA/h de conversa mede o modelo,
+  não generalização entre falantes.
+- O áudio de jogo vem de 5 vídeos de gameplay (19,6 h) e as narrações de 24
+  vídeos (125 recortes por pico de volume). Os recortes não foram ouvidos um a
+  um: são trechos de 2,4 s em torno do pico de RMS do vídeo, como o plano pede
+  ("recortados em torno do grito").
+- `gol_real` é só para avaliação local; nunca entra no git.
