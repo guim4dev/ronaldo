@@ -497,6 +497,24 @@ def test_cancelar_depois_do_start_dictation(monkeypatch):
     assert "dispatch" not in eventos and "type" not in eventos
 
 
+def test_cancelar_durante_o_inicio_do_hex(monkeypatch):
+    lst = _listener()
+    eventos = []
+    _preparar_hex(monkeypatch, eventos)
+    mostrados = _huds(monkeypatch)
+    monkeypatch.setattr(
+        listener.hexcli,
+        "ensure_running",
+        lambda: (cancelar.pedir(), False)[1],
+    )
+    lst._record_until_silence = lambda **_kw: pytest.fail("must not record after a cancel")
+
+    lst._dictate(Route(model="x", action="command", command=["/mock/agente"]))
+
+    assert "start" not in eventos and "discard" not in eventos
+    assert mostrados[-1][0][0] == "🚫 Cancelado"
+
+
 def test_cancelar_durante_a_gravacao_numa_rota_de_digitacao(monkeypatch):
     lst = _listener()
     eventos = []

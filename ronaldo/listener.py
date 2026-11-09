@@ -210,11 +210,12 @@ class Listener:
         voz.parar()  # a wake word corta qualquer fala em andamento
         voz.marcar_gravando(True)
         try:
-            if not hexcli.ensure_running():
-                if use_hud: agent_hud.show("⚠️ Não entendi", "Hex não está disponível.", "warn", 5, req_id)
-                return
+            pronto = hexcli.ensure_running()
             if self._cancelado():
                 self._mostrar_cancelado(use_hud, req_id)
+                return
+            if not pronto:
+                if use_hud: agent_hud.show("⚠️ Não entendi", "Hex não está disponível.", "warn", 5, req_id)
                 return
             hexcli.ensure_language(self.cfg.resolved_language())
             if self._cancelado():
