@@ -319,11 +319,11 @@ def test_ctl_dois_cancel_ao_mesmo_tempo(monkeypatch, tmp_path):
     fcntl.flock(preso, fcntl.LOCK_EX | fcntl.LOCK_NB)
     monkeypatch.setattr(ctl, "LOCK", lock_path)
     monkeypatch.setattr(ctl, "REQUEST", tmp_path / "ronaldo" / "cancel.request")
-    barreira = threading.Barrier(2)
+    sincronia = threading.Barrier(2)
     resultados = []
 
     def chamar():
-        barreira.wait()
+        sincronia.wait()
         resultados.append(ctl.cancelar())
 
     fios = [threading.Thread(target=chamar) for _ in range(2)]
