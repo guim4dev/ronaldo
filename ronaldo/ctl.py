@@ -1,24 +1,33 @@
-"""`ronaldo on|off|status`: turn Ronaldo and the microphone off and back on.
+"""`ronaldo on|off|status|cancel`: turn Ronaldo and the microphone off and back on.
 
 Ronaldo and Hex both keep the microphone open, so `off` stops both. The
 LaunchAgent restarts a killed listener, so `off` also disables the service, and
 turns off Hex's launch at login. If Hex is already closed, `off` leaves it
 closed to avoid opening the microphone, so its launch at login stays unchanged.
+
+`cancel` asks the running listener to throw the current dictation away. It
+writes a request file; the listener holds the lock, so a free lock means there
+is nothing to cancel.
 """
 
 from __future__ import annotations
 
+import fcntl
 import os
 import plistlib
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
 PADRAO = "io.github.ronaldo"
 ESPERA = 10.0
 HEX = "/Applications/Hex.app/Contents/MacOS/hex"
-USO = "uso: ronaldo on|off|status"
+_CACHE = Path.home() / "Library" / "Caches"
+LOCK = _CACHE / "ronaldo.lock"
+REQUEST = _CACHE / "ronaldo" / "cancel.request"
+USO = "uso: ronaldo on|off|status|cancel"
 
 
 def _run(*argv: str) -> subprocess.CompletedProcess:
@@ -135,6 +144,43 @@ def ligar() -> str | None:
     return None
 
 
+def cancelar() -> str | None:
+    """Ask the listener to cancel; None on success, else why it did not happen."""
+    try:
+        LOCK.parent.mkdir(parents=True, exist_ok=True)
+        arquivo = open(LOCK, "a")
+    except OSError as exc:
+        return f"Não consegui conferir se o Ronaldo está ouvindo: {exc}"
+    with arquivo:
+        try:
+            fcntl.flock(arquivo, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            pass  # someone holds the lock: the listener is running
+        except OSError as exc:
+            return f"Não consegui conferir se o Ronaldo está ouvindo: {exc}"
+        else:
+            try:
+                fcntl.flock(arquivo, fcntl.LOCK_UN)
+            except OSError:
+                pass
+            return "O Ronaldo não está ouvindo; nada para cancelar."
+    try:
+        REQUEST.parent.mkdir(parents=True, exist_ok=True)
+        fd, nome = tempfile.mkstemp(prefix="cancel-", suffix=".tmp", dir=REQUEST.parent)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as arquivo:
+                arquivo.write(f"{time.time():.3f}")
+            os.replace(nome, REQUEST)
+        finally:
+            try:
+                os.unlink(nome)
+            except FileNotFoundError:
+                pass
+    except OSError as exc:
+        return f"Não consegui pedir o cancelamento: {exc}"
+    return None
+
+
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     comando = args[0] if args else "status"
@@ -152,6 +198,13 @@ def main(argv: list[str] | None = None) -> int:
             print(erro, file=sys.stderr)
             print(estado())
             return 1
+    elif comando == "cancel":
+        erro = cancelar()
+        if erro:
+            print(erro, file=sys.stderr)
+            return 1
+        print("Cancelado.")
+        return 0
     elif comando != "status":
         print(USO, file=sys.stderr)
         return 2

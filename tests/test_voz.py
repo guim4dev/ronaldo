@@ -804,7 +804,7 @@ def test_listener_para_fala_e_marca_gravacao(monkeypatch):
     eventos = []
     monkeypatch.setattr(listener.voz, "parar", lambda: eventos.append("parar"))
     monkeypatch.setattr(listener.voz, "marcar_gravando", lambda valor: eventos.append(("gravando", valor)))
-    monkeypatch.setattr(listener.hexcli, "ensure_running", lambda: False)
+    monkeypatch.setattr(listener.hexcli, "ensure_running", lambda **_kw: False)
     instancia = Listener.__new__(Listener)
     instancia.cfg = Config(routes=[Route(model="x", action="command", command=["/mock/agente"], hud=False)])
     instancia.path = "/bin"
@@ -814,7 +814,7 @@ def test_listener_para_fala_e_marca_gravacao(monkeypatch):
 
 def test_listener_manda_voz_para_o_agente(monkeypatch):
     recebido = []
-    monkeypatch.setattr(listener.hexcli, "ensure_running", lambda: True)
+    monkeypatch.setattr(listener.hexcli, "ensure_running", lambda **_kw: True)
     monkeypatch.setattr(listener.hexcli, "ensure_language", lambda lang: True)
     monkeypatch.setattr(listener.hexcli, "start_dictation", lambda: True)
     monkeypatch.setattr(listener.hexcli, "stop_and_transcribe", lambda: "pergunta")
@@ -824,7 +824,7 @@ def test_listener_manda_voz_para_o_agente(monkeypatch):
     instancia = Listener.__new__(Listener)
     instancia.cfg = Config(routes=[Route(model="x", action="command", command=["/mock/agente"], voz=True)])
     instancia.path = "/bin"
-    instancia._record_until_silence = lambda: "silence"
+    instancia._record_until_silence = lambda **_kw: "silence"
     instancia._dictate(instancia.cfg.routes[0])
     assert recebido and recebido[0]["voz"] is True
 

@@ -4,6 +4,7 @@ ObjC.bindFunction("getppid", ["int", []]);
 var ppid = $.getppid();
 var argv = $.NSProcessInfo.processInfo.arguments;
 var path = ObjC.unwrap(argv.objectAtIndex(4));
+var framePath = argv.count > 5 ? ObjC.unwrap(argv.objectAtIndex(5)) : "";
 var app = $.NSApplication.sharedApplication;
 app.setActivationPolicy($.NSApplicationActivationPolicyAccessory);
 
@@ -23,6 +24,7 @@ panel.setCollectionBehavior(
     $.NSWindowCollectionBehaviorFullScreenAuxiliary |
     $.NSWindowCollectionBehaviorStationary
 );
+// The panel never takes the click: the global event tap does.
 panel.setIgnoresMouseEvents(true);
 panel.setOpaque(false);
 panel.setBackgroundColor($.NSColor.clearColor);
@@ -36,6 +38,7 @@ var colors = {
     ok: $.NSColor.colorWithCalibratedRedGreenBlueAlpha(0.06, 0.24, 0.18, 0.94),
     err: $.NSColor.colorWithCalibratedRedGreenBlueAlpha(0.32, 0.08, 0.08, 0.95),
     warn: $.NSColor.colorWithCalibratedRedGreenBlueAlpha(0.32, 0.22, 0.05, 0.95),
+    rec: $.NSColor.colorWithSRGBRedGreenBlueAlpha(0.26, 0.05, 0.05, 0.94),
     info: $.NSColor.colorWithCalibratedRedGreenBlueAlpha(0.10, 0.11, 0.14, 0.94)
 };
 view.layer.setBackgroundColor(colors.info.CGColor);
@@ -56,10 +59,57 @@ bodyField.setFont($.NSFont.systemFontOfSize(13));
 bodyField.setUsesSingleLineMode(false);
 bodyField.cell.setWraps(true);
 bodyField.cell.setScrollable(false);
+
+var pillWidth = 96;
+var pillHeight = 24;
+var pill = $.NSView.alloc.initWithFrame($.NSMakeRect(width - pillWidth - padding, 32, pillWidth, pillHeight));
+pill.setWantsLayer(true);
+pill.layer.setCornerRadius(pillHeight / 2);
+pill.layer.setMasksToBounds(true);
+pill.layer.setBackgroundColor($.NSColor.colorWithSRGBRedGreenBlueAlpha(0.42, 0.10, 0.10, 1.0).CGColor);
+var pillLabel = $.NSTextField.alloc.initWithFrame($.NSMakeRect(6, 3, pillWidth - 12, 18));
+pillLabel.setBezeled(false);
+pillLabel.setDrawsBackground(false);
+pillLabel.setEditable(false);
+pillLabel.setSelectable(false);
+pillLabel.setAlignment($.NSTextAlignmentCenter);
+pillLabel.setTextColor($.NSColor.whiteColor);
+pillLabel.setFont($.NSFont.boldSystemFontOfSize(12));
+pillLabel.setStringValue("Cancelar");
+pill.addSubview(pillLabel);
+pill.setHidden(true);
+view.addSubview(pill);
 panel.orderOut(null);
 
 var raw = "";
 var hide = 0;
+
+function writeFrame(state) {
+    if (!framePath) {
+        return;
+    }
+    var frame = panel.frame;
+    var primary = $.NSScreen.screens.objectAtIndex(0).frame.size.height;
+    var rect = {
+        id: state.id,
+        x: frame.origin.x,
+        y: primary - (frame.origin.y + frame.size.height),
+        w: frame.size.width,
+        h: frame.size.height
+    };
+    $(JSON.stringify(rect)).dataUsingEncoding($.NSUTF8StringEncoding)
+        .writeToFileAtomically($(framePath), true);
+}
+
+function clearFrame() {
+    if (!framePath) {
+        return;
+    }
+    var manager = $.NSFileManager.defaultManager;
+    if (manager.fileExistsAtPath($(framePath))) {
+        manager.removeItemAtPathError($(framePath), null);
+    }
+}
 
 function showState(state) {
     var lines = String(state.body || "").split("\n");
@@ -76,6 +126,8 @@ function showState(state) {
         visibleLines[7] = visibleLines[7].slice(0, 45) + "…";
     }
 
+    var cancel = state.cancel === true;
+    var reserved = cancel ? pillWidth + 8 : 0;
     var body = visibleLines.join("\n");
     var bodyHeight = Math.max(1, visibleLines.length) * 18;
     var height = Math.max(68, 60 + bodyHeight);
@@ -85,12 +137,29 @@ function showState(state) {
         visibleFrame.origin.y + visibleFrame.size.height - height - 20,
         width, height
     ), false);
-    titleField.setFrame($.NSMakeRect(padding, height - padding - 20, width - 2 * padding, 20));
-    bodyField.setFrame($.NSMakeRect(padding, padding, width - 2 * padding, bodyHeight + 4));
+    titleField.setFrame($.NSMakeRect(padding, height - padding - 20, width - 2 * padding - reserved, 20));
+    bodyField.setFrame($.NSMakeRect(padding, padding, width - 2 * padding - reserved, bodyHeight + 4));
+    pill.setFrame($.NSMakeRect(width - pillWidth - padding, height - padding - pillHeight, pillWidth, pillHeight));
     titleField.setStringValue(String(state.title || ""));
     bodyField.setStringValue(body);
     view.layer.setBackgroundColor((colors[state.kind] || colors.info).CGColor);
+    pill.setHidden(!cancel);
     panel.performSelector($.NSSelectorFromString("orderFrontRegardless"));
+    if (cancel) {
+        try {
+            writeFrame(state);
+        } catch (error) {
+            $.NSFileHandle.fileHandleWithStandardError.writeData(
+                $("hud frame erro: " + error + "\n").dataUsingEncoding($.NSUTF8StringEncoding)
+            );
+        }
+    } else {
+        try {
+            clearFrame();
+        } catch (error) {
+            // Best effort: a stale frame is dropped by the listener when it disarms.
+        }
+    }
     $.NSFileHandle.fileHandleWithStandardError.writeData(
         $("hud mostrado " + state.id + "\n").dataUsingEncoding($.NSUTF8StringEncoding)
     );
