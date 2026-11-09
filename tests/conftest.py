@@ -48,6 +48,32 @@ except Exception:  # noqa: BLE001 - anything means CoreGraphics is unavailable
 
 
 @pytest.fixture(autouse=True)
+def _isolated_cancel_state(monkeypatch, tmp_path):
+    """Keep the cache files and the cancel state out of the real home directory."""
+    from ronaldo import cancelar, hud
+
+    cache = tmp_path / "ronaldo-cache"
+    monkeypatch.setattr(cancelar, "REQUEST", cache / "cancel.request")
+    monkeypatch.setattr(hud, "_STATE", cache / "hud.json")
+    monkeypatch.setattr(hud, "_ACTION", cache / "hud-action.json")
+    monkeypatch.setattr(hud, "_FRAME", cache / "hud-frame.json")
+    _reset_cancelar()
+    yield
+    _reset_cancelar()
+
+
+def _reset_cancelar() -> None:
+    from ronaldo import cancelar
+
+    cancelar.parar()
+    cancelar._armado = False
+    cancelar._id = None
+    cancelar._frame = None
+    cancelar._evento.clear()
+    cancelar._fala.clear()
+
+
+@pytest.fixture(autouse=True)
 def _linux_apple_languages(monkeypatch):
     """`defaults read -g AppleLanguages` only exists on macOS."""
     if sys.platform == "darwin":

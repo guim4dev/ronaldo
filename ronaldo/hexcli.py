@@ -79,3 +79,16 @@ def stop_and_transcribe(timeout: float = 120) -> str | None:
         log.error("hex dictation stop falhou (%s): %s", r.returncode, (r.stderr or r.stdout).strip())
         return None
     return r.stdout.strip() or None
+
+
+def discard_dictation(timeout: float = 120) -> None:
+    """Throw the recording away: nothing is typed, sent or spoken afterwards.
+
+    `hex dictation cancel` discards the audio on Hex versions that have it; older
+    ones stop and print the transcript, which is simply dropped here.
+    """
+    r = _run("dictation", "cancel", timeout=15)
+    if r.returncode == 0:
+        return
+    log.info("hex dictation cancel indisponível (%s); parando e descartando", r.returncode)
+    _run("dictation", "stop", "--print", timeout=timeout)

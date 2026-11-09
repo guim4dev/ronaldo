@@ -797,6 +797,12 @@ def falar_agora(texto: str) -> bool:
     return falador().falar_agora(texto)
 
 
+def falando() -> bool:
+    """Is there audio playing right now? Read without a lock; never blocks."""
+    atual = _FALADOR
+    return atual is not None and atual.player._proc is not None
+
+
 # ---------------------------------------------------------------- comandos
 
 

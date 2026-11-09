@@ -15,6 +15,8 @@ from pathlib import Path
 log = logging.getLogger("ronaldo.hud")
 _SCRIPT = Path(__file__).with_name("hud.js")
 _STATE = Path.home() / "Library" / "Caches" / "ronaldo" / "hud.json"
+_ACTION = _STATE.with_name("hud-action.json")
+_FRAME = _STATE.with_name("hud-frame.json")
 _lock = threading.RLock()
 _seq = 0
 _n = 0
@@ -56,12 +58,21 @@ def start() -> None:
                 except Exception:
                     pass
             _STATE.parent.mkdir(parents=True, exist_ok=True)
-            try:
-                _STATE.unlink()
-            except FileNotFoundError:
-                pass
+            for caminho in (_STATE, _ACTION, _FRAME):
+                try:
+                    caminho.unlink()
+                except FileNotFoundError:
+                    pass
             _daemon = subprocess.Popen(
-                ["osascript", "-l", "JavaScript", str(_SCRIPT), str(_STATE)],
+                [
+                    "osascript",
+                    "-l",
+                    "JavaScript",
+                    str(_SCRIPT),
+                    str(_STATE),
+                    str(_ACTION),
+                    str(_FRAME),
+                ],
                 stdout=subprocess.DEVNULL,
                 stderr=sys.stderr,
             )
@@ -99,6 +110,7 @@ def show(
     kind: str = "info",
     seconds: float = 6,
     req_id: int | None = None,
+    cancel: bool = False,
 ) -> None:
     global _n
     try:
@@ -109,18 +121,52 @@ def show(
             if _daemon is None or _daemon.poll() is not None:
                 return
             _n += 1
-            _write_state(
-                {
-                    "id": req_id if req_id is not None else begin(),
-                    "n": _n,
-                    "title": title,
-                    "body": body,
-                    "kind": kind,
-                    "seconds": seconds,
-                }
-            )
+            payload = {
+                "id": req_id if req_id is not None else begin(),
+                "n": _n,
+                "title": title,
+                "body": body,
+                "kind": kind,
+                "seconds": seconds,
+            }
+            if cancel:
+                payload["cancel"] = True
+            _write_state(payload)
     except Exception:
         log.exception("não foi possível mostrar HUD")
+
+
+def _read_json(path: Path) -> dict | None:
+    try:
+        dados = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return dados if isinstance(dados, dict) else None
+
+
+def _clear(path: Path) -> None:
+    try:
+        path.unlink()
+    except OSError:
+        pass
+
+
+def read_action() -> dict | None:
+    """The click the HUD reports, if any. Missing or broken files read as None."""
+    return _read_json(_ACTION)
+
+
+def clear_action() -> None:
+    _clear(_ACTION)
+
+
+def read_frame() -> dict | None:
+    """The pill rectangle written by the HUD, in Quartz coordinates."""
+    return _read_json(_FRAME)
+
+
+def clear_frame() -> None:
+    _clear(_FRAME)
 
 
 def main(argv: list[str] | None = None) -> int:
