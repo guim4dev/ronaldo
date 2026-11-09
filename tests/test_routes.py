@@ -53,7 +53,7 @@ def test_pick_route_takes_the_strongest_above_its_threshold():
 
 
 def _listener_with(monkeypatch, route, text):
-    monkeypatch.setattr(hexcli, "ensure_running", lambda: True)
+    monkeypatch.setattr(hexcli, "ensure_running", lambda **_kw: True)
     monkeypatch.setattr(hexcli, "ensure_language", lambda lang: True)
     monkeypatch.setattr(hexcli, "start_dictation", lambda: True)
     monkeypatch.setattr(hexcli, "stop_and_transcribe", lambda: text)

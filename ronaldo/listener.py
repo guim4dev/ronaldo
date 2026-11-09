@@ -206,11 +206,12 @@ class Listener:
     def _dictate(self, route: Route) -> None:
         use_hud = route.action == "command" and route.hud
         req_id = agent_hud.begin() if use_hud else None
+        cancelar.iniciar()  # renova os fios do cancelamento se algum caiu
         cancelar.armar(req_id)
         voz.parar()  # a wake word corta qualquer fala em andamento
         voz.marcar_gravando(True)
         try:
-            pronto = hexcli.ensure_running()
+            pronto = hexcli.ensure_running(cancel=self._cancelado)
             if self._cancelado():
                 self._mostrar_cancelado(use_hud, req_id)
                 return

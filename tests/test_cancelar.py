@@ -28,7 +28,7 @@ def _listener() -> Listener:
 
 
 def _preparar_hex(monkeypatch, eventos: list, texto: str = "texto") -> None:
-    monkeypatch.setattr(listener.hexcli, "ensure_running", lambda: True)
+    monkeypatch.setattr(listener.hexcli, "ensure_running", lambda **_kw: True)
     monkeypatch.setattr(listener.hexcli, "ensure_language", lambda lang: True)
     monkeypatch.setattr(listener.hexcli, "start_dictation", lambda: eventos.append("start") or True)
     monkeypatch.setattr(listener.hexcli, "stop_and_transcribe", lambda: eventos.append("stop") or texto)
@@ -218,6 +218,16 @@ def test_operario_para_a_fala(monkeypatch):
     assert pronto.wait(timeout=2)
 
 
+def test_iniciar_renova_o_operario_morto():
+    cancelar.iniciar()
+    morto = threading.Thread(target=lambda: None)
+    cancelar._operario = morto
+
+    cancelar.iniciar()
+
+    assert cancelar._operario is not morto and cancelar._operario.is_alive()
+
+
 # ---------------------------------------------------------------- arquivo de pedido
 
 
@@ -258,6 +268,20 @@ def test_sem_arquivo_de_pedido():
     assert cancelar.pedido() is False
 
 
+def test_o_pedido_novo_nao_e_apagado_pelo_vigia(monkeypatch):
+    cancelar.armar(1)
+    cancelar.REQUEST.parent.mkdir(parents=True, exist_ok=True)
+    cancelar.REQUEST.write_text("velho", encoding="utf-8")
+
+    def pedir_e_escrever():
+        cancelar._evento.set()
+        cancelar.REQUEST.write_text("novo", encoding="utf-8")
+
+    monkeypatch.setattr(cancelar, "pedir", pedir_e_escrever)
+    assert cancelar.verificar_pedido() is True
+    assert cancelar.REQUEST.read_text(encoding="utf-8") == "novo"
+
+
 # ---------------------------------------------------------------- ctl cancel
 
 
@@ -288,6 +312,33 @@ def test_ctl_cancel_com_lock_preso_escreve(monkeypatch, tmp_path, capsys):
     assert pedido.read_text(encoding="utf-8").strip()
 
 
+def test_ctl_dois_cancel_ao_mesmo_tempo(monkeypatch, tmp_path):
+    lock_path = tmp_path / "ronaldo.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    preso = open(lock_path, "w")
+    fcntl.flock(preso, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    monkeypatch.setattr(ctl, "LOCK", lock_path)
+    monkeypatch.setattr(ctl, "REQUEST", tmp_path / "ronaldo" / "cancel.request")
+    barreira = threading.Barrier(2)
+    resultados = []
+
+    def chamar():
+        barreira.wait()
+        resultados.append(ctl.cancelar())
+
+    fios = [threading.Thread(target=chamar) for _ in range(2)]
+    try:
+        for fio in fios:
+            fio.start()
+        for fio in fios:
+            fio.join(timeout=2)
+    finally:
+        preso.close()
+
+    assert resultados == [None, None]
+    assert (tmp_path / "ronaldo" / "cancel.request").exists()
+
+
 # ---------------------------------------------------------------- frame do HUD
 
 
@@ -313,6 +364,18 @@ def test_atualizar_frame_ignora_id_errado_e_campos_invalidos():
     assert cancelar.frame() is None
 
     hud._FRAME.write_text(json.dumps({"id": 2, "x": "a", "y": 2, "w": 3, "h": 4}), encoding="utf-8")
+    cancelar.atualizar_frame()
+    assert cancelar.frame() is None
+
+
+def test_frame_tardio_nao_sobrevive_ao_desarmar(monkeypatch):
+    cancelar.armar(2)
+
+    def le_e_desarma():
+        cancelar.desarmar()
+        return {"id": 2, "x": 1, "y": 2, "w": 3, "h": 4}
+
+    monkeypatch.setattr(hud, "read_frame", le_e_desarma)
     cancelar.atualizar_frame()
     assert cancelar.frame() is None
 
@@ -505,7 +568,7 @@ def test_cancelar_durante_o_inicio_do_hex(monkeypatch):
     monkeypatch.setattr(
         listener.hexcli,
         "ensure_running",
-        lambda: (cancelar.pedir(), False)[1],
+        lambda **_kw: (cancelar.pedir(), False)[1],
     )
     lst._record_until_silence = lambda **_kw: pytest.fail("must not record after a cancel")
 
@@ -513,6 +576,20 @@ def test_cancelar_durante_o_inicio_do_hex(monkeypatch):
 
     assert "start" not in eventos and "discard" not in eventos
     assert mostrados[-1][0][0] == "🚫 Cancelado"
+
+
+def test_ensure_running_cancel_interrompe(monkeypatch):
+    monkeypatch.setattr(hexcli, "status", lambda: {})
+
+    def run(*args, **kwargs):
+        time.sleep(2)
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(hexcli, "_run", run)
+    inicio = time.monotonic()
+
+    assert hexcli.ensure_running(timeout=5, cancel=lambda: time.monotonic() - inicio > 0.15) is False
+    assert time.monotonic() - inicio < 1.5
 
 
 def test_cancelar_durante_a_gravacao_numa_rota_de_digitacao(monkeypatch):

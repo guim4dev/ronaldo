@@ -247,12 +247,12 @@ def test_listener_hex_failures_empty_and_exception_warn(monkeypatch):
         listener.agent_hud, "show", lambda *args, **kwargs: calls.append(args)
     )
 
-    monkeypatch.setattr(listener.hexcli, "ensure_running", lambda: False)
+    monkeypatch.setattr(listener.hexcli, "ensure_running", lambda **_kw: False)
     instance._dictate(route)
     assert calls[-1][0] == "⚠️ Não entendi"
 
     calls.clear()
-    monkeypatch.setattr(listener.hexcli, "ensure_running", lambda: True)
+    monkeypatch.setattr(listener.hexcli, "ensure_running", lambda **_kw: True)
     monkeypatch.setattr(listener.hexcli, "ensure_language", lambda *_: None)
     monkeypatch.setattr(listener.hexcli, "start_dictation", lambda: False)
     instance._dictate(route)
@@ -282,7 +282,7 @@ def test_disabled_hud_and_type_route_never_show(monkeypatch):
     monkeypatch.setattr(
         listener.agent_hud, "show", lambda *args, **kwargs: calls.append(args)
     )
-    monkeypatch.setattr(listener.hexcli, "ensure_running", lambda: False)
+    monkeypatch.setattr(listener.hexcli, "ensure_running", lambda **_kw: False)
 
     command_route = listener.Route(
         model="x", action="command", command=["cmd"], hud=False

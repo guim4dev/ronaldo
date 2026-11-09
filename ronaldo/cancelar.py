@@ -8,6 +8,7 @@ global hotkey only sets two events, so it never does I/O.
 from __future__ import annotations
 
 import logging
+import os
 import threading
 import time
 from pathlib import Path
@@ -17,6 +18,7 @@ from . import hud, voz
 log = logging.getLogger("ronaldo.cancelar")
 
 REQUEST = Path.home() / "Library" / "Caches" / "ronaldo" / "cancel.request"
+CLAIM = REQUEST.with_name("cancel.claim")
 IDADE_MAXIMA = 10.0  # a request older than this is a leftover, not a cancel
 INTERVALO = 0.2  # how often the watcher looks at the request file
 
@@ -84,12 +86,14 @@ def fechar() -> bool:
 
 
 def frame() -> tuple[float, float, float, float] | None:
-    return _frame
+    with _lock:
+        return _frame
 
 
 def dentro(x: float, y: float) -> bool:
     """Is the point inside the HUD pill, in Quartz coordinates (y from the top)?"""
-    retangulo = _frame
+    with _lock:
+        retangulo = _frame
     if retangulo is None:
         return False
     fx, fy, largura, altura = retangulo
@@ -105,10 +109,10 @@ def _numero(valor: object) -> float | None:
 def atualizar_frame() -> None:
     """Cache the pill rectangle written by the HUD; the tap only reads numbers."""
     global _frame
-    if not _armado:
+    if not armado():
         return
     dados = hud.read_frame()
-    if not isinstance(dados, dict) or dados.get("id") != _id:
+    if not isinstance(dados, dict):
         return
     x = _numero(dados.get("x"))
     y = _numero(dados.get("y"))
@@ -116,25 +120,41 @@ def atualizar_frame() -> None:
     h = _numero(dados.get("h"))
     if None in (x, y, w, h):
         return
-    _frame = (x, y, w, h)
+    with _lock:
+        if not _armado or dados.get("id") != _id:  # desarmou ou trocou o ditado durante o I/O
+            return
+        _frame = (x, y, w, h)
 
 
 def verificar_pedido(agora: float | None = None) -> bool:
-    """One watcher pass: turn a fresh request file into a cancel, drop old ones."""
+    """One watcher pass: claim the request file, turn a fresh one into a cancel.
+
+    The claim is an atomic rename, so a `ronaldo cancel` that writes a new
+    request at the same time lands in REQUEST and is not deleted by this pass.
+    """
     momento = time.time() if agora is None else agora
     try:
-        idade = momento - REQUEST.stat().st_mtime
-    except OSError:
+        os.replace(REQUEST, CLAIM)
+    except FileNotFoundError:
+        return False
+    except OSError as exc:
+        log.warning("não consegui pegar o pedido de cancelamento: %s", exc)
         return False
     try:
-        REQUEST.unlink()
-    except OSError:
-        pass
-    if idade > IDADE_MAXIMA:
-        log.info("pedido de cancelamento velho (%.0f s); ignorado", idade)
-        return False
-    pedir()
-    return True
+        try:
+            idade = momento - CLAIM.stat().st_mtime
+        except OSError:
+            return False
+        if idade > IDADE_MAXIMA:
+            log.info("pedido de cancelamento velho (%.0f s); ignorado", idade)
+            return False
+        pedir()
+        return True
+    finally:
+        try:
+            CLAIM.unlink()
+        except OSError:
+            pass
 
 
 def _vigiar() -> None:
@@ -157,16 +177,20 @@ def _trabalhar() -> None:
 
 
 def iniciar() -> None:
-    """Start the watcher and the speech worker once."""
+    """Start (or renew) the watcher and the speech worker once."""
     global _vigia, _operario
     with _threads_lock:
-        if _vigia is not None and _vigia.is_alive():
+        vigia_vivo = _vigia is not None and _vigia.is_alive()
+        operario_vivo = _operario is not None and _operario.is_alive()
+        if vigia_vivo and operario_vivo:
             return
         _parar.clear()
-        _vigia = threading.Thread(target=_vigiar, name="ronaldo-cancelar-vigia", daemon=True)
-        _operario = threading.Thread(target=_trabalhar, name="ronaldo-cancelar-fala", daemon=True)
-        _vigia.start()
-        _operario.start()
+        if not vigia_vivo:
+            _vigia = threading.Thread(target=_vigiar, name="ronaldo-cancelar-vigia", daemon=True)
+            _vigia.start()
+        if not operario_vivo:
+            _operario = threading.Thread(target=_trabalhar, name="ronaldo-cancelar-fala", daemon=True)
+            _operario.start()
 
 
 def parar() -> None:

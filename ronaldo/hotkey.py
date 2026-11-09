@@ -167,7 +167,7 @@ def _rodar_tap(estado: dict, cg, cf, callback) -> None:
 def _instalar(alvo: tuple[int, int], pedir, ativo) -> None:
     global _iniciado
     if _iniciado:
-        return
+        return  # one tap per process: a failed install needs a new process
     _iniciado = True
     cg = ctypes.cdll.LoadLibrary("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics")
     cf = ctypes.cdll.LoadLibrary("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation")

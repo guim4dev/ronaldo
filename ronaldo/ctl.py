@@ -17,6 +17,7 @@ import os
 import plistlib
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -165,9 +166,16 @@ def cancelar() -> str | None:
             return "O Ronaldo não está ouvindo; nada para cancelar."
     try:
         REQUEST.parent.mkdir(parents=True, exist_ok=True)
-        temporario = REQUEST.with_name(REQUEST.name + ".tmp")
-        temporario.write_text(f"{time.time():.3f}", encoding="utf-8")
-        os.replace(temporario, REQUEST)
+        fd, nome = tempfile.mkstemp(prefix="cancel-", suffix=".tmp", dir=REQUEST.parent)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as arquivo:
+                arquivo.write(f"{time.time():.3f}")
+            os.replace(nome, REQUEST)
+        finally:
+            try:
+                os.unlink(nome)
+            except FileNotFoundError:
+                pass
     except OSError as exc:
         return f"Não consegui pedir o cancelamento: {exc}"
     return None

@@ -54,6 +54,7 @@ def _isolated_cancel_state(monkeypatch, tmp_path):
 
     cache = tmp_path / "ronaldo-cache"
     monkeypatch.setattr(cancelar, "REQUEST", cache / "cancel.request")
+    monkeypatch.setattr(cancelar, "CLAIM", cache / "cancel.claim")
     monkeypatch.setattr(hud, "_STATE", cache / "hud.json")
     monkeypatch.setattr(hud, "_FRAME", cache / "hud-frame.json")
     _reset_cancelar()
