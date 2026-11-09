@@ -548,3 +548,61 @@ def test_config_cancel_hotkey_padrao_e_arquivo(tmp_path):
     assert Config.load(arquivo).cancel_hotkey == "cmd+."
 
 
+# ---------------------------------------------------------------- HUD
+
+
+@pytest.fixture
+def hud_estado():
+    hud._daemon = None
+    hud._seq = 0
+    hud._n = 0
+    yield
+    hud._daemon = None
+    hud._seq = 0
+    hud._n = 0
+
+
+def test_show_com_cancel_inclui_a_chave(monkeypatch, hud_estado):
+    monkeypatch.setattr(hud.subprocess, "Popen", lambda *a, **k: _Proc())
+    req_id = hud.begin()
+
+    hud.show("t", "b", "rec", 3, req_id, cancel=True)
+    assert json.loads(hud._STATE.read_text(encoding="utf-8"))["cancel"] is True
+
+    hud.show("t", "b", "rec", 3, req_id, cancel=False)
+    assert "cancel" not in json.loads(hud._STATE.read_text(encoding="utf-8"))
+
+
+def test_start_apaga_acao_e_frame(monkeypatch, hud_estado):
+    hud._ACTION.parent.mkdir(parents=True, exist_ok=True)
+    hud._ACTION.write_text("{}", encoding="utf-8")
+    hud._FRAME.write_text("{}", encoding="utf-8")
+    invocados = []
+
+    def spawn(*args, **kwargs):
+        invocados.append(args[0])
+        return _Proc()
+
+    monkeypatch.setattr(hud.subprocess, "Popen", spawn)
+    hud.start()
+
+    assert not hud._ACTION.exists() and not hud._FRAME.exists()
+    assert invocados[0][4:] == [str(hud._STATE), str(hud._ACTION), str(hud._FRAME)]
+
+
+def test_read_action_e_frame_tolerantes(hud_estado):
+    assert hud.read_action() is None
+    assert hud.read_frame() is None
+
+    hud._ACTION.parent.mkdir(parents=True, exist_ok=True)
+    hud._ACTION.write_text("não é json", encoding="utf-8")
+    hud._FRAME.write_text("[1, 2]", encoding="utf-8")
+    assert hud.read_action() is None
+    assert hud.read_frame() is None
+
+    hud._ACTION.write_text(json.dumps({"action": "cancel", "id": 1}), encoding="utf-8")
+    assert hud.read_action() == {"action": "cancel", "id": 1}
+
+    hud.clear_action()
+    hud.clear_frame()
+    assert not hud._ACTION.exists() and not hud._FRAME.exists()

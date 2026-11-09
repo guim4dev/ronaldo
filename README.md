@@ -78,6 +78,7 @@ max_seconds = 60.0        # limite por ditado
 vad_threshold = 0.5
 cooldown_seconds = 1.5
 language = "auto"         # idioma da transcrição no Hex; "auto" = idioma do macOS (pt-BR → pt)
+cancel_hotkey = "cmd+d"   # atalho global que cancela o ditado em curso
 ```
 
 Nas rotas de comando, o HUD flutuante mostra a transcrição, o resultado e falhas sem tirar o foco da janela atual. Desative por rota com `hud = false`.
@@ -152,6 +153,22 @@ nome = "agente"
 ```
 
 Com `qualquer_posicao = true`, o atalho de comando curto dispara com qualquer fala curta que **contenha** uma das palavras, em qualquer posição, inclusive esticada ("do gol porra", "que golaço", "goool!"). `qualquer_posicao` não vale para comando com `{text}`.
+
+## Cancelar um ditado
+
+Enquanto grava, o HUD mostra a pílula **Cancelar**. Três caminhos cancelam o ditado em curso:
+
+- clique na pílula;
+- o atalho global `cmd+d` (config `cancel_hotkey`; `cmd+.` ou `escape` também valem);
+- `ronaldo cancel`, de qualquer terminal.
+
+Ao cancelar, nada é colado, nada vai pro agente e a fala em andamento para. Depois que o texto foi despachado o envio é irreversível; o cancelamento só para a fala.
+
+O clique e o atalho dependem da permissão de **Acessibilidade**, a mesma que o Ronaldo já usa para colar e dar Enter. Sem ela, use `ronaldo cancel`; a pílula continua visível como indicação.
+
+`cmd+d` só é capturado enquanto o Ronaldo grava ou fala. Fora disso, o atalho vai pro app em foco (no Chrome, abre o bookmark).
+
+No Hex 3.3 não existe `hex dictation cancel`: o áudio é transcrito e guardado como `printed`, mas nada é colado, enviado ou falado. Quando o Hex tiver o comando, o áudio passa a ser descartado de verdade, sem mudanças no Ronaldo.
 
 ## Ver funcionando
 
