@@ -15,7 +15,6 @@ from pathlib import Path
 log = logging.getLogger("ronaldo.hud")
 _SCRIPT = Path(__file__).with_name("hud.js")
 _STATE = Path.home() / "Library" / "Caches" / "ronaldo" / "hud.json"
-_ACTION = _STATE.with_name("hud-action.json")
 _FRAME = _STATE.with_name("hud-frame.json")
 _lock = threading.RLock()
 _seq = 0
@@ -58,7 +57,7 @@ def start() -> None:
                 except Exception:
                     pass
             _STATE.parent.mkdir(parents=True, exist_ok=True)
-            for caminho in (_STATE, _ACTION, _FRAME):
+            for caminho in (_STATE, _FRAME):
                 try:
                     caminho.unlink()
                 except FileNotFoundError:
@@ -70,7 +69,6 @@ def start() -> None:
                     "JavaScript",
                     str(_SCRIPT),
                     str(_STATE),
-                    str(_ACTION),
                     str(_FRAME),
                 ],
                 stdout=subprocess.DEVNULL,
@@ -149,15 +147,6 @@ def _clear(path: Path) -> None:
         path.unlink()
     except OSError:
         pass
-
-
-def read_action() -> dict | None:
-    """The click the HUD reports, if any. Missing or broken files read as None."""
-    return _read_json(_ACTION)
-
-
-def clear_action() -> None:
-    _clear(_ACTION)
 
 
 def read_frame() -> dict | None:

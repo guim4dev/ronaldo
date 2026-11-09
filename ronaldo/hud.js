@@ -4,10 +4,7 @@ ObjC.bindFunction("getppid", ["int", []]);
 var ppid = $.getppid();
 var argv = $.NSProcessInfo.processInfo.arguments;
 var path = ObjC.unwrap(argv.objectAtIndex(4));
-// actionPath is where a click report would go; the panel ignores the mouse, so
-// the global event tap is the one that turns a click into a cancel.
-var actionPath = argv.count > 5 ? ObjC.unwrap(argv.objectAtIndex(5)) : "";
-var framePath = argv.count > 6 ? ObjC.unwrap(argv.objectAtIndex(6)) : "";
+var framePath = argv.count > 5 ? ObjC.unwrap(argv.objectAtIndex(5)) : "";
 var app = $.NSApplication.sharedApplication;
 app.setActivationPolicy($.NSApplicationActivationPolicyAccessory);
 

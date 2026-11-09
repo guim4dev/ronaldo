@@ -35,14 +35,13 @@ _operario: threading.Thread | None = None
 def armar(req_id: int | None) -> None:
     """Open a cancel window for this dictation, dropping any prior request."""
     global _armado, _id, _frame
+    hud.clear_frame()
     with _lock:
         _evento.clear()
         _fala.clear()
         _frame = None
         _id = req_id
         _armado = True
-        hud.clear_action()
-        hud.clear_frame()
 
 
 def desarmar() -> None:
@@ -53,8 +52,7 @@ def desarmar() -> None:
         _id = None
         _evento.clear()
         _frame = None
-        hud.clear_action()
-        hud.clear_frame()
+    hud.clear_frame()
 
 
 def armado() -> bool:
@@ -119,17 +117,6 @@ def atualizar_frame() -> None:
     if None in (x, y, w, h):
         return
     _frame = (x, y, w, h)
-
-
-def pedido_hud() -> bool:
-    """Was the pill clicked? Always clears the file so the next dictation is clean."""
-    with _lock:
-        armado_agora, atual = _armado, _id
-    dados = hud.read_action()
-    hud.clear_action()
-    if not armado_agora or not isinstance(dados, dict):
-        return False
-    return dados.get("action") == "cancel" and dados.get("id") == atual
 
 
 def verificar_pedido(agora: float | None = None) -> bool:

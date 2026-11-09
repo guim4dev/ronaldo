@@ -188,14 +188,9 @@ class Listener:
         return max(hits, key=lambda h: h[0])[1] if hits else None
 
     def _cancelado(self) -> bool:
-        """Did anyone ask to cancel? Reads the HUD files once per audio block."""
+        """Did anyone ask to cancel? Refreshes the pill rectangle once per audio block."""
         cancelar.atualizar_frame()
-        if cancelar.pedido():
-            return True
-        if cancelar.pedido_hud():
-            cancelar.pedir()  # also closes the window for the atomic fechar()
-            return True
-        return False
+        return cancelar.pedido()
 
     def _mostrar_cancelado(self, use_hud: bool, req_id: int | None) -> None:
         if use_hud:

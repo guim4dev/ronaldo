@@ -20,6 +20,7 @@ CMD = 1 << 20
 SHIFT = 1 << 17
 ALT = 1 << 19
 CTRL = 1 << 18
+_MODIFICADORES_TODOS = CMD | SHIFT | ALT | CTRL
 
 _MODIFICADORES = {
     "cmd": CMD,
@@ -108,7 +109,7 @@ def _tratar(tipo: int, tecla: int | None, flags: int, ponto, estado: dict) -> bo
     """Decide whether to swallow the event. Pure arithmetic: no I/O."""
     if tipo in (KEY_DOWN, KEY_UP):
         alvo_flags, alvo_tecla = estado["alvo"]
-        if tecla != alvo_tecla or (flags & alvo_flags) != alvo_flags:
+        if tecla != alvo_tecla or (flags & _MODIFICADORES_TODOS) != alvo_flags:
             return False
         if not estado["ativo"]():
             return False

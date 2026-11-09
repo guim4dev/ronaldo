@@ -113,9 +113,9 @@ def test_tecla_configurada_engole_o_evento():
     }
     assert hotkey._tratar(hotkey.KEY_DOWN, 2, hotkey.CMD, None, estado) is True
     assert hotkey._tratar(hotkey.KEY_UP, 2, hotkey.CMD, None, estado) is True
-    # extra modifiers still count, as the mask only checks the shortcut ones
-    assert hotkey._tratar(hotkey.KEY_DOWN, 2, hotkey.CMD | hotkey.SHIFT, None, estado) is True
-    assert pedidos == ["pedir", "pedir", "pedir"]
+    # a different modifier set is not the configured shortcut
+    assert hotkey._tratar(hotkey.KEY_DOWN, 2, hotkey.CMD | hotkey.SHIFT, None, estado) is False
+    assert pedidos == ["pedir", "pedir"]
 
 
 def test_tecla_fora_do_atalho_passa_direto():
@@ -129,6 +129,19 @@ def test_tecla_fora_do_atalho_passa_direto():
     assert hotkey._tratar(hotkey.KEY_DOWN, 3, hotkey.CMD, None, estado) is False
     assert hotkey._tratar(hotkey.KEY_DOWN, 2, 0, None, estado) is False
     assert pedidos == []
+
+
+def test_escape_sem_modificador_nao_engole_cmd_escape():
+    pedidos = []
+    estado = {
+        "alvo": (0, 53),
+        "pedir": lambda: pedidos.append("pedir"),
+        "ativo": lambda: True,
+        "dentro": lambda x, y: False,
+    }
+    assert hotkey._tratar(hotkey.KEY_DOWN, 53, 0, None, estado) is True
+    assert hotkey._tratar(hotkey.KEY_DOWN, 53, hotkey.CMD, None, estado) is False
+    assert pedidos == ["pedir"]
 
 
 def test_atalho_inativo_nao_engole():
@@ -245,44 +258,6 @@ def test_sem_arquivo_de_pedido():
     assert cancelar.pedido() is False
 
 
-# ---------------------------------------------------------------- pedido do HUD
-
-
-def test_pedido_hud_com_id_atual():
-    cancelar.armar(5)
-    hud._ACTION.parent.mkdir(parents=True, exist_ok=True)
-    hud._ACTION.write_text(json.dumps({"action": "cancel", "id": 5}), encoding="utf-8")
-
-    assert cancelar.pedido_hud() is True
-    assert not hud._ACTION.exists()
-
-
-def test_pedido_hud_com_id_velho_e_apagado():
-    cancelar.armar(5)
-    hud._ACTION.parent.mkdir(parents=True, exist_ok=True)
-    hud._ACTION.write_text(json.dumps({"action": "cancel", "id": 4}), encoding="utf-8")
-
-    assert cancelar.pedido_hud() is False
-    assert not hud._ACTION.exists()
-
-
-def test_pedido_hud_ignora_outra_acao():
-    cancelar.armar(5)
-    hud._ACTION.parent.mkdir(parents=True, exist_ok=True)
-    hud._ACTION.write_text(json.dumps({"action": "outra", "id": 5}), encoding="utf-8")
-
-    assert cancelar.pedido_hud() is False
-    assert not hud._ACTION.exists()
-
-
-def test_pedido_hud_fora_da_gravacao_apaga():
-    hud._ACTION.parent.mkdir(parents=True, exist_ok=True)
-    hud._ACTION.write_text(json.dumps({"action": "cancel", "id": 5}), encoding="utf-8")
-
-    assert cancelar.pedido_hud() is False
-    assert not hud._ACTION.exists()
-
-
 # ---------------------------------------------------------------- ctl cancel
 
 
@@ -349,18 +324,16 @@ def test_dentro_sem_frame():
 # ---------------------------------------------------------------- armar/desarmar/fechar
 
 
-def test_armar_e_desarmar_limpam_os_arquivos():
-    hud._ACTION.parent.mkdir(parents=True, exist_ok=True)
-    hud._ACTION.write_text("{}", encoding="utf-8")
+def test_armar_e_desarmar_limpam_o_frame():
+    hud._FRAME.parent.mkdir(parents=True, exist_ok=True)
     hud._FRAME.write_text("{}", encoding="utf-8")
 
     cancelar.armar(1)
-    assert not hud._ACTION.exists() and not hud._FRAME.exists()
+    assert not hud._FRAME.exists()
 
-    hud._ACTION.write_text("{}", encoding="utf-8")
     hud._FRAME.write_text("{}", encoding="utf-8")
     cancelar.desarmar()
-    assert not hud._ACTION.exists() and not hud._FRAME.exists()
+    assert not hud._FRAME.exists()
 
 
 def test_armar_limpa_o_estado_anterior():
@@ -573,9 +546,8 @@ def test_show_com_cancel_inclui_a_chave(monkeypatch, hud_estado):
     assert "cancel" not in json.loads(hud._STATE.read_text(encoding="utf-8"))
 
 
-def test_start_apaga_acao_e_frame(monkeypatch, hud_estado):
-    hud._ACTION.parent.mkdir(parents=True, exist_ok=True)
-    hud._ACTION.write_text("{}", encoding="utf-8")
+def test_start_apaga_frame(monkeypatch, hud_estado):
+    hud._FRAME.parent.mkdir(parents=True, exist_ok=True)
     hud._FRAME.write_text("{}", encoding="utf-8")
     invocados = []
 
@@ -586,23 +558,19 @@ def test_start_apaga_acao_e_frame(monkeypatch, hud_estado):
     monkeypatch.setattr(hud.subprocess, "Popen", spawn)
     hud.start()
 
-    assert not hud._ACTION.exists() and not hud._FRAME.exists()
-    assert invocados[0][4:] == [str(hud._STATE), str(hud._ACTION), str(hud._FRAME)]
+    assert not hud._FRAME.exists()
+    assert invocados[0][4:] == [str(hud._STATE), str(hud._FRAME)]
 
 
-def test_read_action_e_frame_tolerantes(hud_estado):
-    assert hud.read_action() is None
+def test_read_frame_tolerante(hud_estado):
     assert hud.read_frame() is None
 
-    hud._ACTION.parent.mkdir(parents=True, exist_ok=True)
-    hud._ACTION.write_text("não é json", encoding="utf-8")
+    hud._FRAME.parent.mkdir(parents=True, exist_ok=True)
     hud._FRAME.write_text("[1, 2]", encoding="utf-8")
-    assert hud.read_action() is None
     assert hud.read_frame() is None
 
-    hud._ACTION.write_text(json.dumps({"action": "cancel", "id": 1}), encoding="utf-8")
-    assert hud.read_action() == {"action": "cancel", "id": 1}
+    hud._FRAME.write_text(json.dumps({"id": 1, "x": 10, "y": 20, "w": 30, "h": 40}), encoding="utf-8")
+    assert hud.read_frame() == {"id": 1, "x": 10, "y": 20, "w": 30, "h": 40}
 
-    hud.clear_action()
     hud.clear_frame()
-    assert not hud._ACTION.exists() and not hud._FRAME.exists()
+    assert not hud._FRAME.exists()
