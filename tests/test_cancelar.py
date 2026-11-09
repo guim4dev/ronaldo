@@ -283,6 +283,36 @@ def test_pedido_hud_fora_da_gravacao_apaga():
     assert not hud._ACTION.exists()
 
 
+# ---------------------------------------------------------------- ctl cancel
+
+
+def test_ctl_cancel_com_lock_livre_nao_escreve(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(ctl, "LOCK", tmp_path / "ronaldo.lock")
+    monkeypatch.setattr(ctl, "REQUEST", tmp_path / "ronaldo" / "cancel.request")
+
+    assert ctl.main(["cancel"]) == 1
+    assert "não está ouvindo" in capsys.readouterr().err
+    assert not (tmp_path / "ronaldo" / "cancel.request").exists()
+
+
+def test_ctl_cancel_com_lock_preso_escreve(monkeypatch, tmp_path, capsys):
+    lock_path = tmp_path / "ronaldo.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    preso = open(lock_path, "w")
+    fcntl.flock(preso, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    monkeypatch.setattr(ctl, "LOCK", lock_path)
+    pedido = tmp_path / "ronaldo" / "cancel.request"
+    monkeypatch.setattr(ctl, "REQUEST", pedido)
+    try:
+        assert ctl.main(["cancel"]) == 0
+    finally:
+        preso.close()
+
+    assert capsys.readouterr().out == "Cancelado.\n"
+    assert pedido.exists()
+    assert pedido.read_text(encoding="utf-8").strip()
+
+
 # ---------------------------------------------------------------- frame do HUD
 
 
@@ -398,6 +428,113 @@ def test_discard_dictation_cai_no_stop_print(monkeypatch):
     monkeypatch.setattr(hexcli, "_run", run)
     hexcli.discard_dictation()
     assert chamadas == [("dictation", "cancel"), ("dictation", "stop", "--print")]
+
+
+# ---------------------------------------------------------------- gravação
+
+
+def test_record_until_silence_devolve_cancelled():
+    lst = _listener()
+    consumidos = []
+
+    def fonte():
+        for _ in range(5):
+            consumidos.append(1)
+            yield np.zeros(1600, dtype=np.int16)
+
+    assert lst._record_until_silence(fonte(), cancelled=lambda: True) == "cancelled"
+    assert len(consumidos) == 1
+
+
+def test_cancelar_durante_a_gravacao(monkeypatch):
+    lst = _listener()
+    eventos = []
+    _preparar_hex(monkeypatch, eventos)
+    mostrados = _huds(monkeypatch)
+    monkeypatch.setattr(listener.voz, "marcar_gravando", lambda valor: eventos.append(("gravando", valor)))
+    lst._record_until_silence = lambda **_kw: "cancelled"
+
+    lst._dictate(Route(model="x", action="command", command=["/mock/agente"]))
+
+    assert "discard" in eventos
+    assert "stop" not in eventos
+    assert "dispatch" not in eventos and "type" not in eventos
+    assert mostrados[0][0][0] == "🎙️ Ouvindo…"
+    assert mostrados[0][1]["cancel"] is True
+    assert mostrados[-1][0][0] == "🚫 Cancelado"
+    assert eventos[-1] == ("gravando", False)
+
+
+def test_cancelar_durante_a_transcricao(monkeypatch):
+    lst = _listener()
+    eventos = []
+    _preparar_hex(monkeypatch, eventos)
+    mostrados = _huds(monkeypatch)
+
+    def parar_e_transcrever():
+        eventos.append("stop")
+        cancelar.pedir()
+        return "texto"
+
+    monkeypatch.setattr(listener.hexcli, "stop_and_transcribe", parar_e_transcrever)
+    lst._record_until_silence = lambda **_kw: "silence"
+
+    lst._dictate(Route(model="x", action="command", command=["/mock/agente"]))
+
+    assert "dispatch" not in eventos and "type" not in eventos
+    assert mostrados[-1][0][0] == "🚫 Cancelado"
+
+
+def test_cancelar_imediatamente_antes_do_dispatch(monkeypatch):
+    lst = _listener()
+    eventos = []
+    _preparar_hex(monkeypatch, eventos)
+    mostrados = _huds(monkeypatch)
+    lst._record_until_silence = lambda **_kw: "silence"
+
+    real_fechar = cancelar.fechar
+
+    def fechar_com_pedido():
+        cancelar.pedir()
+        return real_fechar()
+
+    monkeypatch.setattr(cancelar, "fechar", fechar_com_pedido)
+
+    lst._dictate(Route(model="x", action="command", command=["/mock/agente"]))
+
+    assert "dispatch" not in eventos and "type" not in eventos
+    assert mostrados[-1][0][0] == "🚫 Cancelado"
+
+
+def test_cancelar_depois_do_start_dictation(monkeypatch):
+    lst = _listener()
+    eventos = []
+    _preparar_hex(monkeypatch, eventos)
+    _huds(monkeypatch)
+    monkeypatch.setattr(
+        listener.hexcli,
+        "start_dictation",
+        lambda: (eventos.append("start"), cancelar.pedir(), True)[2],
+    )
+    lst._record_until_silence = lambda **_kw: pytest.fail("must not record after a cancel")
+
+    lst._dictate(Route(model="x", action="command", command=["/mock/agente"]))
+
+    assert "discard" in eventos and "stop" not in eventos
+    assert "dispatch" not in eventos and "type" not in eventos
+
+
+def test_cancelar_durante_a_gravacao_numa_rota_de_digitacao(monkeypatch):
+    lst = _listener()
+    eventos = []
+    _preparar_hex(monkeypatch, eventos)
+    _huds(monkeypatch)
+    lst._record_until_silence = lambda **_kw: "cancelled"
+
+    lst._dictate(Route(model="x", action="type"))
+
+    assert "discard" in eventos
+    assert "type" not in eventos
 
 
 # ---------------------------------------------------------------- config

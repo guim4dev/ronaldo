@@ -19,7 +19,7 @@ from pathlib import Path
 import numpy as np
 import sounddevice as sd
 
-from . import agent, hexcli, macos, voz
+from . import agent, cancelar, hexcli, hotkey, macos, voz
 from . import hud as agent_hud
 from .detector import CHUNK, SAMPLE_RATE, VoiceActivity, WakeWord
 
@@ -89,6 +89,7 @@ class Config:
     cooldown_seconds: float = 1.5  # ignore wake words right after a dictation
     language: str = "auto"  # Hex transcription language; "auto" = macOS preferred language
     voz: dict = field(default_factory=dict)  # [voz]: motores e volume, lidos por voz.py
+    cancel_hotkey: str = "cmd+d"  # global shortcut that cancels the running dictation
 
     def resolved_language(self) -> str:
         return system_language() if self.language == "auto" else self.language
@@ -153,7 +154,7 @@ class Listener:
         while not self.audio.empty():
             self.audio.get_nowait()
 
-    def _record_until_silence(self, chunks=None) -> str:
+    def _record_until_silence(self, chunks=None, cancelled=None) -> str:
         """Consume audio until the speaker stops; returns why it ended.
 
         Time is counted in audio chunks (80 ms each), not wall clock, so the
@@ -165,6 +166,8 @@ class Listener:
         step = CHUNK / SAMPLE_RATE
         elapsed, last_speech = 0.0, None
         for chunk in source:
+            if cancelled is not None and cancelled():
+                return "cancelled"
             elapsed += step
             if self.vad.speech_prob(chunk) >= cfg.vad_threshold:
                 last_speech = elapsed
@@ -184,25 +187,67 @@ class Listener:
         hits = [(s, self.routes[n]) for n, s in scores.items() if s >= self.routes[n].threshold]
         return max(hits, key=lambda h: h[0])[1] if hits else None
 
+    def _cancelado(self) -> bool:
+        """Did anyone ask to cancel? Reads the HUD files once per audio block."""
+        cancelar.atualizar_frame()
+        if cancelar.pedido():
+            return True
+        if cancelar.pedido_hud():
+            cancelar.pedir()  # also closes the window for the atomic fechar()
+            return True
+        return False
+
+    def _mostrar_cancelado(self, use_hud: bool, req_id: int | None) -> None:
+        if use_hud:
+            agent_hud.show("🚫 Cancelado", "Nada foi enviado.", "warn", 3, req_id)
+
+    def _mostrar_gravando(self, use_hud: bool, req_id: int | None) -> None:
+        if not use_hud:
+            return
+        atalho = hotkey.rotulo(getattr(self.cfg, "cancel_hotkey", ""))
+        corpo = f"{atalho} ou clique em Cancelar" if atalho else "Clique em Cancelar"
+        agent_hud.show("🎙️ Ouvindo…", corpo, "rec", 3600, req_id, cancel=True)
+
     def _dictate(self, route: Route) -> None:
         use_hud = route.action == "command" and route.hud
         req_id = agent_hud.begin() if use_hud else None
+        cancelar.armar(req_id)
         voz.parar()  # a wake word corta qualquer fala em andamento
         voz.marcar_gravando(True)
         try:
             if not hexcli.ensure_running():
                 if use_hud: agent_hud.show("⚠️ Não entendi", "Hex não está disponível.", "warn", 5, req_id)
                 return
+            if self._cancelado():
+                self._mostrar_cancelado(use_hud, req_id)
+                return
             hexcli.ensure_language(self.cfg.resolved_language())
+            if self._cancelado():
+                self._mostrar_cancelado(use_hud, req_id)
+                return
             if not hexcli.start_dictation():
                 if use_hud: agent_hud.show("⚠️ Não entendi", "Não consegui iniciar a gravação.", "warn", 5, req_id)
                 return
+            if self._cancelado():
+                hexcli.discard_dictation()
+                self._mostrar_cancelado(use_hud, req_id)
+                return
+            self._mostrar_gravando(use_hud, req_id)
             log.info("gravando…")
             try:
-                reason = self._record_until_silence()
+                reason = self._record_until_silence(cancelled=self._cancelado)
                 log.info("fim da gravação: %s", reason)
-            finally:
-                text = hexcli.stop_and_transcribe()
+            except BaseException:
+                hexcli.stop_and_transcribe()  # a gravação não pode deixar o Hex aberto
+                raise
+            if reason == "cancelled":
+                hexcli.discard_dictation()
+                self._mostrar_cancelado(use_hud, req_id)
+                return
+            text = hexcli.stop_and_transcribe()
+            if self._cancelado():
+                self._mostrar_cancelado(use_hud, req_id)
+                return
             if not text:
                 log.info("sem fala; nada feito")
                 if use_hud: agent_hud.show("⚠️ Não entendi", "Não detectei fala.", "warn", 5, req_id)
@@ -214,19 +259,28 @@ class Listener:
             if route.action == "command":
                 if use_hud:
                     agent_hud.show("🎙️ Ronaldo ouviu", agent.summarize(text) + " — enviando…", "info", 6, req_id)
+                if not cancelar.fechar():
+                    self._mostrar_cancelado(use_hud, req_id)
+                    return
                 agent.dispatch(route.command, text, path=self.path, timeout=route.timeout_seconds, notify_reply=route.notify, name=route.name, hud=use_hud, req_id=req_id, atalhos=route.atalhos, voz=route.voz)
                 return
             log.info("colando %d caracteres%s", len(text), " + Enter" if route.press_enter else "")
+            if not cancelar.fechar():
+                self._mostrar_cancelado(use_hud, req_id)
+                return
             macos.type_and_submit(text, submit=route.press_enter)
         except Exception as exc:
             if use_hud:
                 agent_hud.show("⚠️ Não entendi", agent.summarize(str(exc)) or "Falha no ditado.", "warn", 5, req_id)
             raise
         finally:
+            cancelar.desarmar()
             voz.marcar_gravando(False)
 
     def run(self) -> None:
         cfg = self.cfg
+        cancelar.iniciar()
+        hotkey.iniciar(cfg.cancel_hotkey, cancelar.pedir, lambda: cancelar.armado() or voz.falando())
         if any(r.action == "command" and r.hud for r in cfg.routes):
             import atexit
             agent_hud.start()

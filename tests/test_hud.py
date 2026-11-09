@@ -260,7 +260,7 @@ def test_listener_hex_failures_empty_and_exception_warn(monkeypatch):
 
     calls.clear()
     monkeypatch.setattr(listener.hexcli, "start_dictation", lambda: True)
-    instance._record_until_silence = lambda: "silence"
+    instance._record_until_silence = lambda **_kw: "silence"
     monkeypatch.setattr(listener.hexcli, "stop_and_transcribe", lambda: None)
     instance._dictate(route)
     assert calls[-1][0] == "⚠️ Não entendi"

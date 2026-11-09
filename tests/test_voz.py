@@ -824,7 +824,7 @@ def test_listener_manda_voz_para_o_agente(monkeypatch):
     instancia = Listener.__new__(Listener)
     instancia.cfg = Config(routes=[Route(model="x", action="command", command=["/mock/agente"], voz=True)])
     instancia.path = "/bin"
-    instancia._record_until_silence = lambda: "silence"
+    instancia._record_until_silence = lambda **_kw: "silence"
     instancia._dictate(instancia.cfg.routes[0])
     assert recebido and recebido[0]["voz"] is True
 

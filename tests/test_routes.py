@@ -60,7 +60,7 @@ def _listener_with(monkeypatch, route, text):
     lst = Listener.__new__(Listener)
     lst.cfg = Config(routes=[route])
     lst.path = "/usr/bin:/bin"
-    monkeypatch.setattr(lst, "_record_until_silence", lambda: "silence")
+    monkeypatch.setattr(lst, "_record_until_silence", lambda **_kw: "silence")
     return lst
 
 
