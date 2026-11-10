@@ -6,5 +6,6 @@
 | `silero_vad.onnx` | [Silero VAD](https://github.com/snakers4/silero-vad), as bundled by openWakeWord | MIT |
 | `extra/wall-e.onnx`, `extra/hey_zelda.onnx`, `extra/ronaldo_en.onnx` | [fwartner/home-assistant-wakewords-collection](https://github.com/fwartner/home-assistant-wakewords-collection) | MIT |
 | `ronaldo_ptbr.onnx` | trained for this project with synthetic pt-BR voices (Piper), on top of the openWakeWord feature extractor | [CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/) © Thiago Guimarães — same terms as the openWakeWord models it depends on |
+| `glados_ptbr.onnx` | trained for the GLaDOS project with synthetic pt-BR voices (Piper), on top of the openWakeWord feature extractor | [CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/) © Thiago Guimarães — same terms as the openWakeWord models it depends on |
 
 The code in this repository is MIT (see [`LICENSE`](../LICENSE)); the models keep the licenses above.

@@ -184,6 +184,8 @@ uv run pytest                                        # testes
 
 Os modelos prontos de "Ronaldo" que existem são treinados com pronúncia em inglês e não reconhecem um brasileiro falando (nota máxima de 0,12 com voz real). Por isso o `ronaldo_ptbr.onnx` é treinado para este projeto com vozes sintéticas pt-BR. Alternativas prontas que funcionam razoavelmente com voz brasileira ficam em `models/extra/` (`wall-e`, `hey_zelda`). O `ronaldo_ptbr.onnx` é aberto sob CC BY-NC-SA 4.0 (uso não-comercial, mesma licença dos modelos do openWakeWord dos quais ele depende). Licenças de cada modelo em [`models/LICENSES.md`](models/LICENSES.md).
 
+O `glados_ptbr.onnx` é o detector da palavra "gládos" (pronúncia brasileira, GAH-dos), treinado do mesmo jeito, com vozes pt-BR: serve para acordar a GLaDOS no computador.
+
 ## Licença
 
 Código: [MIT](LICENSE). Modelos: ver [`models/LICENSES.md`](models/LICENSES.md).
