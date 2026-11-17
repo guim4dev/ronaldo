@@ -93,7 +93,7 @@ motores e o volume vêm de `[voz]` no `config.toml`:
 [[routes]]
 model = "ronaldo_ptbr.onnx"
 action = "command"
-command = ["/Users/guima/.local/bin/corte", "falar", "{text}"]
+command = ["corte", "falar", "{text}"]
 voz = true
 
 [voz]
