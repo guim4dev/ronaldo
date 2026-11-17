@@ -1,0 +1,127 @@
+{
+  "versao": 1,
+  "descricao": "Frases de referência do piloto A/B de transcrição pt-BR do Ronaldo. O campo 'texto' é a referência: leia exatamente isto, e é isto que entra no cálculo do WER.",
+  "como_usar": "Grave uma frase por arquivo, nomeando pelo id (f01.m4a, f02.m4a, ...). Não edite o texto depois de gravar: a referência tem que ser escrita antes.",
+  "frases": [
+    {
+      "id": "f01",
+      "categoria": "nomes",
+      "texto": "O Guimarães pediu para o Ronaldo abrir o projeto do Reino dos Macacos no terminal."
+    },
+    {
+      "id": "f02",
+      "categoria": "nomes",
+      "texto": "A arara-canindé e a arara-azul aparecem no documentário sobre o Anodorhynchus."
+    },
+    {
+      "id": "f03",
+      "categoria": "tecnico",
+      "texto": "O Hex transcreve com o Whisper large-v3-turbo e o Arara usa o whisper.cpp."
+    },
+    {
+      "id": "f04",
+      "categoria": "tecnico",
+      "texto": "Liga o modo voz do Kokoro no Wyoming e manda a resposta para o alto-falante."
+    },
+    {
+      "id": "f05",
+      "categoria": "acentos",
+      "texto": "A avaliação técnica do português ficou correta, com acentuação e pontuação."
+    },
+    {
+      "id": "f06",
+      "categoria": "acentos",
+      "texto": "Você viu o jacaré no coração do Pantanal? Eu vi três."
+    },
+    {
+      "id": "f07",
+      "categoria": "numeros",
+      "texto": "O relatório tem 4,17 por cento de erro e foi feito em 2026."
+    },
+    {
+      "id": "f08",
+      "categoria": "numeros",
+      "texto": "Comprei mil e duzentos metros de cabo e paguei quarenta e dois reais."
+    },
+    {
+      "id": "f09",
+      "categoria": "pontuacao",
+      "texto": "Primeiro: grave o áudio; depois, transcreva; por fim, compare os resultados."
+    },
+    {
+      "id": "f10",
+      "categoria": "pontuacao",
+      "texto": "Ele perguntou: você vai testar hoje? Eu respondi que sim — mas com calma."
+    },
+    {
+      "id": "f11",
+      "categoria": "siglas",
+      "texto": "A API do WER roda no CLI e mede o pt-BR no M2."
+    },
+    {
+      "id": "f12",
+      "categoria": "siglas",
+      "texto": "O PR foi aprovado, o deploy saiu e o rollback está documentado."
+    },
+    {
+      "id": "f13",
+      "categoria": "giria",
+      "texto": "Mano, esse trampo tá mó bagunçado; tipo assim, vamos por partes."
+    },
+    {
+      "id": "f14",
+      "categoria": "giria",
+      "texto": "O bagulho funcionou de primeira, sem gambiarra e sem suporte."
+    },
+    {
+      "id": "f15",
+      "categoria": "terminal",
+      "texto": "Roda o comando git commit com a mensagem e depois faz o push da branch."
+    },
+    {
+      "id": "f16",
+      "categoria": "terminal",
+      "texto": "O hex transcribe recebe o arquivo, o modelo e o idioma, e imprime o texto."
+    },
+    {
+      "id": "f17",
+      "categoria": "arquivo",
+      "texto": "O documento fica em docs/avaliacao-arara-voice.md e o script em tools/piloto/wer.py."
+    },
+    {
+      "id": "f18",
+      "categoria": "ingles",
+      "texto": "O pull request está pronto, mas o build quebrou no último commit."
+    },
+    {
+      "id": "f19",
+      "categoria": "ingles",
+      "texto": "Faz o merge depois do review e confere o status do pipeline."
+    },
+    {
+      "id": "f20",
+      "categoria": "longo",
+      "texto": "Se o turbo não for melhor no seu sotaque, a gente mantém o Parakeet v3 e espera o Ultra chegar."
+    },
+    {
+      "id": "f21",
+      "categoria": "longo",
+      "texto": "Eu prefiro gravar as frases uma vez, transcrever os mesmos arquivos com os dois modelos e comparar os erros com calma."
+    },
+    {
+      "id": "f22",
+      "categoria": "versao",
+      "texto": "Atualiza para a versão 3.4.0 do Hex antes de rodar o teste de latência."
+    },
+    {
+      "id": "f23",
+      "categoria": "tecnico",
+      "texto": "O Silero VAD corta o silêncio, e o openWakeWord detecta a palavra de ativação."
+    },
+    {
+      "id": "f24",
+      "categoria": "nomes",
+      "texto": "A reunião é no prédio da rua Doutor Antônio, número vinte e sete, às quatorze e trinta."
+    }
+  ]
+}
