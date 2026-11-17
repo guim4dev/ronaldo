@@ -11,7 +11,7 @@
 ## Sumário executivo
 
 - **Hex e Arara são a mesma categoria:** os dois transcrevem fala localmente e colam o texto; nenhum dos dois fala. O TTS do Ronaldo é Kokoro/`say` e continua igual em qualquer cenário.
-- **Troca direta: não.** O Arara é um app autocontido: não tem CLI, API, servidor nem modo headless (`app/.../Main.java:47-74`). O Ronaldo só sabe dirigir o binário do Hex (`ronaldo/hexcli.py:13`). Sem esse CLI, o Ronaldo não inicia, não para, não lê o texto, não cancela e não troca idioma — nada disso existe no Arara.
+- **Troca direta: não.** O Arara é um app autocontido: não tem CLI/API de controle nem modo headless (`app/.../Main.java:47-74`); o único soquete é o de instância única, que só mostra ou alterna a janela (`SingleInstance.java:30-56`). O Ronaldo só sabe dirigir o binário do Hex (`ronaldo/hexcli.py:13`). Sem esse CLI, o Ronaldo não inicia, não para, não lê o texto, não cancela e não troca idioma — nada disso existe no Arara.
 - **A troca quebra o Ronaldo inteiro**, não só a transcrição: `ronaldo on/off/status` chama `hex status --json`, `hex quit` e `hex launch-at-login` (`ronaldo/ctl.py:83-144`), e o `install.sh` exige `/Applications/Hex.app` com o bundle `anomaly.hex` (`install.sh:11-21`). Arara não oferece nenhum desses comandos.
 - **Usar o modelo do Arara no Hex: o arquivo, não; o mesmo modelo, sim.** O catálogo do Hex já tem `whisper_large_v3_turbo` (GGUF Q8_0, 886 MB), o mesmo Whisper large-v3-turbo do Arara (lá `ggml-large-v3-turbo-q5_0.bin`, 574 MB). O arquivo do Arara é ggml legado (magic `ggml`, provado) e a quantização declarada é Q5_0; o Hex recusa os dois (só GGUF v2/v3 com F32/F16/Q8_0; K-quants só no lab de macOS).
 - **O ganho real de trocar para o turbo é a dica de idioma, não o WER.** No FLEURS `pt` do próprio Hex, turbo 4,17% contra Parakeet v3 4,96% — dentro do ruído de ~1,5 ponto. Mas o turbo aceita `--language pt`; o v3 **não aceita dica de idioma** e detecta sozinho (`models.rs:443`), que é a limitação por trás da issue #68.
@@ -41,9 +41,9 @@ O Hex **não é TTS**. Ele transcreve, aplica os passos de Output e cola. Quem f
 
 | Arquivo | Papel | Linhas |
 |---|---|---|
-| `ronaldo/hexcli.py` | único ponto que fala com o binário do Hex: caminho, status, start, idioma, ditado, cancelamento | 13-15, 22-33, 36-66, 69-82, 85-113 |
+| `ronaldo/hexcli.py` | único ponto que dirige a **transcrição** pelo Hex: caminho, status, start, idioma, ditado, cancelamento (o `ctl.py` também chama o binário, para `status`, `on/off` e `cancel`) | 13-15, 22-33, 36-66, 69-82, 85-113 |
 | `ronaldo/listener.py` | wake word, Silero VAD, ciclo do ditado, rotas, HUD e colagem | 84-95, 157-180, 206-275 |
-| `ronaldo/agent.py` | entrega o texto ao comando do agente (argv/stdin) e notifica a resposta | 208-224, 242-246 |
+| `ronaldo/agent.py` | entrega o texto ao comando do agente (argv/stdin), mostra no HUD e notifica a resposta | 208-238, 242-246 |
 | `ronaldo/macos.py` | cola com Cmd+V e dá Return; restaura o clipboard; confere Acessibilidade | 40-59, 62-65 |
 | `ronaldo/ctl.py` | `ronaldo on/off/status/cancel`; launchd + `hex status/quit/launch-at-login` | 26, 83-94, 97-181 |
 | `install.sh` | exige Hex em `/Applications`, confere o bundle `anomaly.hex`, liga o login do Hex | 11-21, 70-71 |
@@ -57,7 +57,7 @@ O Hex **não é TTS**. Ele transcreve, aplica os passos de Output e cola. Quem f
 4. `hex dictation start` (`hexcli.py:85-89`; `listener.py:225`).
 5. O Ronaldo detecta o fim da fala com o **Silero VAD dele**, em blocos de 80 ms: 2,0 s de silêncio encerram; 6 s sem fala desistem; 60 s é o teto (`listener.py:84-95,147-180,235`).
 6. `hex dictation stop --print` para a gravação e devolve o texto no stdout, sem colar (`hexcli.py:92-100`; `cli.md:100-112`). O Hex espera até 60 s; o Ronaldo espera 120 s (`hexcli.py:92`).
-7. A rota decide: `type` cola com `macos.type_and_submit`; `command` chama `agent.dispatch`; atalhos e modo voz são casos da rota `command` (`listener.py:252-268`; `agent.py:208-246`).
+7. A rota decide: `type` cola com `macos.type_and_submit`; `command` chama `agent.dispatch`; atalhos e modo voz são casos da rota `command` (`listener.py:252-268`; `agent.py:169-246`).
 8. Cancelamento: `hex dictation cancel` descarta de verdade; em Hex antigo, o Ronaldo para e joga o texto fora (`hexcli.py:103-113`; `cli.md:144-150`).
 
 O idioma é pinado por `Config.resolved_language()`: `language="auto"` vira o idioma preferido do macOS, `pt-BR` → `pt` (`listener.py:90-95,124-134`). No Mac, `hex status` confirma `parakeet_v3`/`pt`.
@@ -81,7 +81,7 @@ O Ronaldo não é só um atalho para o Hex. Ele tem wake word, VAD, rotas (`type
 
 ### 1.6 O que está configurado no Mac hoje (leitura)
 
-- Hex 3.4.0, `parakeet_v3`, `language=pt`, permissões de microfone e Acessibilidade prontas, footprint de 201.115.352 bytes (~201 MB), lab `vocabulary-biasing` ligado.
+- Hex 3.4.0, `parakeet_v3`, `language=pt`, permissões de microfone e Acessibilidade prontas, footprint de ~201 MB (201.049.816 bytes na leitura de hoje; a métrica oscila), lab `vocabulary-biasing` ligado.
 - `dictation_hotkey=option`, `shortcut_mode=hold`, `release_microphone_while_idle=false`, `history_retention=week`; o modelo e o idioma são read-only no CLI e mudam por `hex model use`.
 - O Ronaldo tem uma rota `type` (wake word `wall-e`), uma rota `command` que chama um CLI local do Reino, dois atalhos (`batuqueiro` e `gol`) e `[voz]` com Kokoro via Wyoming + `say:Luciana`; `language="auto"` (o padrão) usa o idioma do macOS, e o Hex está em `pt`.
 - O Hex também tem o atalho global dele (Option, no modo hold). Ou seja, já existem hoje **duas portas de entrada** de ditado — a wake word do Ronaldo e o atalho do Hex. Acrescentar o Arara criaria uma terceira.
@@ -99,7 +99,7 @@ Diferente do Hex, o Arara não é uma peça com interface: é o app inteiro — 
 | Componente | O que faz | Arquivo |
 |---|---|---|
 | `Microphone` | captura 16 kHz, mono, PCM | `Microphone.java`; `DECISOES.md:46` |
-| `WhisperTranscriber` | whisper.cpp via JNI, prompt fixo em pt-BR, download/SHA-256, Metal no Mac | `WhisperTranscriber.java:30-43,138-152,199-229` |
+| `WhisperTranscriber` | whisper.cpp via JNI, prompt fixo em pt-BR, download/SHA-256; Metal no Mac pelo `cp.useGPU` | `WhisperTranscriber.java:138-152,172,199-229`; `Gpu.java:16-37` |
 | `DefaultDictationEngine` | toggle/hold, cortes na pausa, alvo de 3 s, prévia, junção, histórico, dicionário, colagem | `DefaultDictationEngine.java:38-55,235-282,379-400,462-496` |
 | `Vad` | VAD por energia, piso adaptativo, 2,5 s de silêncio, 5 min sem fala | `Vad.java:3-15,26-41` |
 | `GlobalHotkey` | atalho global via JNativeHook; não engole a tecla | `GlobalHotkey.java:16-18,44-48`; `DECISOES.md:123` |
@@ -135,7 +135,7 @@ O prompt é fixo: `"Olá! Tudo bem? Este é um ditado em português do Brasil, c
 - Permissões no macOS: Microfone, Acessibilidade e, se o sistema pedir, Monitoramento de Entrada (`docs/macos.md:33-37`). É mais uma permissão para conceder e manter.
 - Instalação: `.dmg`, arrastar para Aplicativos, primeira abertura com "Abrir Mesmo Assim" — o app é assinado só ad-hoc, sem Developer ID (`docs/macos.md:10-31`; `Arara-voice/README.md:83-87`). A cada atualização a assinatura muda e pode ser preciso desligar/ligar o Arara em Acessibilidade (`docs/macos.md:66`).
 - Dados em `~/Library/Application Support/Arara/` (histórico, dicionário, configurações e modelos); "Abrir ao iniciar sessão" grava `~/Library/LaunchAgents/br.arara.Arara.plist` (`docs/macos.md:70-72`).
-- **Atenção:** `startWithWindows` vem `true` por padrão (`Settings.java:58-63`) e o app sincroniza o login na partida (`Startup.java:92-93`). Instalar e abrir o Arara cria um item de login por padrão; num teste ao lado do Ronaldo, isso precisa ser desligado antes.
+- **Atenção:** `startWithWindows` vem `true` por padrão (`Settings.java:58-63`) e o app sincroniza o login na partida (`Startup.java:94-95`). Instalar e abrir o Arara cria um item de login por padrão; num teste ao lado do Ronaldo, isso precisa ser desligado antes.
 
 ### 2.6 Qualidade em pt-BR: o que existe e o que falta
 
@@ -237,7 +237,7 @@ O que dá para fazer sem tocar no Hex: **usar o vocabulário** para os nomes e o
 
 O Hex aceita importar um GGUF `whisper` com F32/F16/Q8_0 e o modelo aparece como `custom-…` (`own-models.md:13-31`). Em teoria, um fine-tune de Whisper large-v3-turbo em pt-BR convertido para GGUF Q8_0 seria importável. Na prática:
 
-- Não achei modelo público validado. A busca na Hugging Face por `whisper portuguese`, `whisper-large-v3-turbo portuguese`, `whisper pt-br` e `whisper large-v3 portuguese` (17/11/2026) devolveu fine-tunes `tiny`/`small`/`base` com dezenas de downloads, e alguns `large-v3` pt-BR com 0–39 downloads; os que abri não tinham GGUF nem licença declarada.
+- Não achei modelo público validado. A busca na Hugging Face por `whisper portuguese`, `whisper-large-v3-turbo portuguese`, `whisper pt-br` e `whisper large-v3 portuguese` (17/11/2026) devolveu fine-tunes `tiny`/`small`/`base` com dezenas de downloads, e alguns `large-v3` pt-BR com 0–39 downloads; nenhum deles tinha GGUF pronto, WER publicado e licença clara ao mesmo tempo (alguns declaram licença, outros não).
 - O próprio Hex diz que não mediu a acurácia de nenhum import (`own-models.md:122-123`).
 - Fine-tune exige corpus, GPU e avaliação; não é configuração, é projeto. Não recomendo.
 
@@ -374,8 +374,8 @@ O pareamento é: `gravando…` → `fim da gravação: silence` → `colando N c
 
 **Objetivo:** ver se o app Arara, no M2, ganha do turbo do Hex no mesmo tipo de frase. Sem integrar nada.
 
-1. `ronaldo off` — isso **não é pausa**: desliga o LaunchAgent do Ronaldo, desliga o login do Hex e fecha o Hex (`ctl.py:97-124`). O rollback é `ronaldo on` (`ctl.py:127-144`).
-2. Instale o `.dmg` do Arara, arraste para Aplicativos, abra com "Abrir Mesmo Assim" e conceda Microfone + Acessibilidade (e Monitoramento de Entrada, se pedir). **Desligue "Abrir ao iniciar sessão"** antes de qualquer teste: o padrão é ligado e grava um LaunchAgent (`Settings.java:58-63`; `Startup.java:92-93`).
+1. `ronaldo off` — isso **não é pausa**: desliga o LaunchAgent do Ronaldo e, **se o Hex estiver rodando**, desliga o login do Hex e o fecha; se o Hex já estava fechado, o login fica como estava e o comando avisa (`ctl.py:97-124`, em especial `108-114`). O rollback é `ronaldo on` (`ctl.py:127-144`).
+2. Instale o `.dmg` do Arara, arraste para Aplicativos, abra com "Abrir Mesmo Assim" e conceda Microfone + Acessibilidade (e Monitoramento de Entrada, se pedir). **Desligue "Abrir ao iniciar sessão"** antes de qualquer teste: o padrão é ligado e grava um LaunchAgent (`Settings.java:58-63`; `Startup.java:94-95`).
 3. Deixe o modelo no Preciso (turbo, 574 MB, padrão) e dite as **mesmas 20–30 frases**, na mesma ordem, no mesmo microfone/ambiente, colando num editor descartável. O Arara não tem entrada em lote: você fala de novo, não reusa os arquivos. Isso enfraquece a comparação; trate como indicativo.
 4. Calcule o WER com a mesma normalização e o mesmo script (salvando as hipóteses em `arara/*.json` ou `.txt`). A latência não tem log: meça com cronômetro ou gravação de tela, do segundo toque (fim) até o texto aparecer; o histórico só guarda segundos (`DefaultDictationEngine.java:476`).
 5. **Critério:** WER do Arara ≤ WER do turbo do Hex + 1,0 ponto **e** p50 ≤ 1,5 s para 8–12 s de fala. Se não bater, não siga.
@@ -404,7 +404,7 @@ Leitura remota no Mac, só read-only:
 ```sh
 hex status --json
 # app_version 3.4.0; model parakeet_v3/language pt; permissions.ready true;
-# memory_footprint_bytes 201115352; labs ["vocabulary-biasing"]
+# memory_footprint_bytes 201049816 (~201 MB; oscila entre leituras); labs ["vocabulary-biasing"]
 
 hex model list --json
 # parakeet_v3: 739 MB, installed true, selected true
