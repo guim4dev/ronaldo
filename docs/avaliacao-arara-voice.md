@@ -16,7 +16,7 @@
 - **Usar o modelo do Arara no Hex: o arquivo, não; o mesmo modelo, sim.** O catálogo do Hex já tem `whisper_large_v3_turbo` (GGUF Q8_0, 886 MB), o mesmo Whisper large-v3-turbo do Arara (lá `ggml-large-v3-turbo-q5_0.bin`, 574 MB). O arquivo do Arara é ggml legado (magic `ggml`, provado) e a quantização declarada é Q5_0; o Hex recusa os dois (só GGUF v2/v3 com F32/F16/Q8_0; K-quants só no lab de macOS).
 - **O ganho real de trocar para o turbo é a dica de idioma, não o WER.** No FLEURS `pt` do próprio Hex, turbo 4,17% contra Parakeet v3 4,96% — dentro do ruído de ~1,5 ponto. Mas o turbo aceita `--language pt`; o v3 **não aceita dica de idioma** e detecta sozinho (`models.rs:443`), que é a limitação por trás da issue #68.
 - **Não há prova de que o Arara transcreva melhor em pt-BR.** O projeto não publica WER independente; o argumento é prompt fixo + dicionário + fatiamento. O harness E2E do repo calcula WER, mas não há resultados versionados, e ele ignora acentos na normalização (`E2E.java:893-905`).
-- **Latência atual no M2, medida no log do Ronaldo:** p50 de 0,72 s e p90 de 1,20 s do fim da fala até "colando N caracteres" (210 ciclos com fala estimada entre 2 e 30 s; no subconjunto de 8–12 s, p50 0,68 s / p90 0,76 s). É a régua do piloto.
+- **Latência atual no M2, medida no log do Ronaldo:** p50 de 0,72 s e p90 de 1,20 s do fim da fala até "colando N caracteres" (210 ciclos com fala estimada entre 2 e 30 s; no subconjunto de 8–12 s, p50 0,68 s / p90 0,76 s). É a régua do v3 (o modelo que rodou no período do log), não do turbo.
 - **Recomendação:** manter o Hex; fazer o A/B com `whisper_large_v3_turbo` no Hex (30–60 min, reversível em um comando). Não trocar o Hex pelo app Arara; não portar o Arara para dentro do Ronaldo. O Arara standalone fica como teste opcional, sem integração.
 
 ### As cinco perguntas
@@ -56,7 +56,7 @@ O Hex **não é TTS**. Ele transcreve, aplica os passos de Output e cola. Quem f
 3. `hexcli.ensure_language` confere o idioma do modelo e só troca se tiver mudado, com `hex model use <id> --language <lang>` (`hexcli.py:69-82`; `listener.py:221`).
 4. `hex dictation start` (`hexcli.py:85-89`; `listener.py:225`).
 5. O Ronaldo detecta o fim da fala com o **Silero VAD dele**, em blocos de 80 ms: 2,0 s de silêncio encerram; 6 s sem fala desistem; 60 s é o teto (`listener.py:84-95,147-180,235`).
-6. `hex dictation stop --print` para a gravação e devolve o texto no stdout, sem colar (`hexcli.py:92-100`; `cli.md:100-112`). O Hex espera até 60 s; o Ronaldo espera 120 s (`hexcli.py:92`).
+6. `hex dictation stop --print` para a gravação e devolve o texto no stdout, sem colar (`hexcli.py:92-100`; `cli.md:100-112`). O Hex espera até 60 s (`cli.md:100-112`); o Ronaldo espera 120 s (`hexcli.py:92`).
 7. A rota decide: `type` cola com `macos.type_and_submit`; `command` chama `agent.dispatch`; atalhos e modo voz são casos da rota `command` (`listener.py:252-268`; `agent.py:169-246`).
 8. Cancelamento: `hex dictation cancel` descarta de verdade; em Hex antigo, o Ronaldo para e joga o texto fora (`hexcli.py:103-113`; `cli.md:144-150`).
 
@@ -109,7 +109,7 @@ Diferente do Hex, o Arara não é uma peça com interface: é o app inteiro — 
 | `Settings` | JSON; não há campo de prompt livre | `Settings.java:22-39` |
 | App | janela Swing, pop-up, bandeja, onboarding, temas, updater | `Main.java`; `Arara-voice/README.md:33-46` |
 
-O VAD de 2,5 s **não encerra o ditado**: ele só muda o estado para `SILENCE` (`DefaultDictationEngine.java:255-261`). Quem encerra é o atalho (toggle ou soltar, no modo segurar) ou o limite de 5 min sem fala (`Vad.java:12`). Isso é uma diferença de fluxo importante em relação ao Ronaldo, que encerra sozinho após 2 s de silêncio.
+O VAD de 2,5 s **não encerra o ditado**: ele só muda o estado para `SILENCE` (`DefaultDictationEngine.java:255-261`). No modo toggle, quem encerra é o atalho; no modo segurar, é soltar a tecla. O limite de 5 min sem fala só finaliza quando **não** se está segurando (`case TIMEOUT` com `if (!holding)`, `DefaultDictationEngine.java:258-260`; `Vad.java:12`). Isso é uma diferença de fluxo importante em relação ao Ronaldo, que encerra sozinho após 2 s de silêncio.
 
 ### 2.3 Sem CLI, API, servidor ou headless
 
@@ -295,6 +295,8 @@ O que **não** fazer: não trocar o Hex pelo Arara no Ronaldo; não portar o Ara
 
 **Instalar o turbo**
 
+> **Atenção:** `install` baixa **e troca o modelo selecionado**; durante o A/B o Ronaldo ao vivo passa a usar o turbo. É reversível, mas é mudança de produção por um tempo — faça o A/B numa janela em que isso não atrapalhe.
+
 ```sh
 hex model install whisper_large_v3_turbo --language pt
 hex model list --json        # confira "installed": true e "selected": true
@@ -306,12 +308,12 @@ hex model list --json        # confira "installed": true e "selected": true
 cd ~/ab-arara
 for f in audio/*; do
   b=$(basename "$f")
-  hex transcribe "$f" --model parakeet_v3 --language pt --json > "v3/$b.json"
+  hex transcribe "$f" --model parakeet_v3 --json > "v3/$b.json"
   hex transcribe "$f" --model whisper_large_v3_turbo --language pt --json > "turbo/$b.json"
 done
 ```
 
-`hex transcribe` não aplica os passos de Output, não cola e não grava histórico (`cli.md:196-200`); é o modelo cru, que é o que o A/B quer. Com o Hex parado, ele sobe um serviço embutido e funciona igual (`cli.md:182-192`).
+`hex transcribe` não aplica os passos de Output, não cola e não grava histórico (`cli.md:196-200`); é o modelo cru, que é o que o A/B quer. Com o Hex parado, ele sobe um serviço embutido e funciona igual (`cli.md:182-192`). O `v3` roda **sem** `--language` porque ele não aceita dica de idioma (`models.rs:443`); a comparação é **v3-auto × turbo-pt**.
 
 **Calcular o WER**
 
@@ -324,7 +326,7 @@ ref = json.load(open("referencia.json"))
 
 def words(s):
     s = s.lower()
-    s = re.sub(r"[^\w\s]", " ", s, flags=re.UNICODE)  # mantém letras (com acento) e dígitos
+    s = re.sub(r"[_\W]", " ", s, flags=re.UNICODE)  # _ e não-palavra viram espaço; letras (com acento) e dígitos ficam
     return re.sub(r"\s+", " ", s).strip().split()
 
 def distance(a, b):
@@ -430,7 +432,7 @@ grep -E 'gravando…|fim da gravação|colando [0-9]+ caracteres' ~/Library/Logs
 # p50 0,72 s; p90 1,20 s; 8–12 s (n=44): p50 0,68 s; p90 0,76 s
 ```
 
-Método do log: pareamento consecutivo `gravando…` → `fim da gravação: silence` → `colando N caracteres`; fala = (fim − gravando) − 2,0 s; latência = colando − fim. Exclui o Cmd+V em si e não normaliza por duração. O modelo de cada ciclo não é registrado; o modelo de hoje é `parakeet_v3`. A janela analisada vai de 05/11/2026 a 17/11/2026.
+Método do log: pareamento consecutivo `gravando…` → `fim da gravação: silence` → `colando N caracteres`; fala = (fim − gravando) − 2,0 s; latência = colando − fim. Exclui o Cmd+V em si e não normaliza por duração. O modelo de cada ciclo não é registrado; o modelo de hoje é `parakeet_v3`, então esses números são a régua do v3. A janela analisada vai de 05/11/2026 a 17/11/2026.
 
 Arquivos do Arara na Hugging Face (Range de 16 bytes):
 
